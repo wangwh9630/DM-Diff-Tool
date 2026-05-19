@@ -7,6 +7,10 @@ public class DiffConfig {
     private ConnectionConfig targetConfig;
     private boolean ignoreCase;
     private List<String> blacklist;
+    private boolean compareTables = true;
+    private boolean compareViews;
+    private boolean compareIndexes;
+    private boolean compareProcedures;
 
     public DiffConfig() {}
 
@@ -40,5 +44,37 @@ public class DiffConfig {
 
     public void setBlacklist(List<String> blacklist) {
         this.blacklist = blacklist;
+    }
+
+    public boolean isCompareTables() {
+        return compareTables;
+    }
+
+    public void setCompareTables(boolean compareTables) {
+        this.compareTables = compareTables;
+    }
+
+    public boolean isCompareViews() {
+        return compareViews;
+    }
+
+    public void setCompareViews(boolean compareViews) {
+        this.compareViews = compareViews;
+    }
+
+    public boolean isCompareIndexes() {
+        return compareIndexes;
+    }
+
+    public void setCompareIndexes(boolean compareIndexes) {
+        this.compareIndexes = compareIndexes;
+    }
+
+    public boolean isCompareProcedures() {
+        return compareProcedures;
+    }
+
+    public void setCompareProcedures(boolean compareProcedures) {
+        this.compareProcedures = compareProcedures;
     }
 }

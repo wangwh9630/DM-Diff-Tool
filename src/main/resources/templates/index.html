@@ -34,6 +34,12 @@
         .loading-spinner.active {
             display: flex;
         }
+
+        /* 夜间模式 */
+        [data-bs-theme="dark"] .card { background-color: #2b3035; border-color: #495057; }
+        [data-bs-theme="dark"] .card-header { background-color: #343a40; }
+        [data-bs-theme="dark"] .bg-light { background-color: #1a1d20 !important; }
+        [data-bs-theme="dark"] .list-group-item { background-color: #2b3035; border-color: #495057; color: #dee2e6; }
     </style>
 </head>
 <body>
@@ -41,6 +47,7 @@
         <div class="container">
             <a class="navbar-brand" href="#">DM-Diff</a>
             <span class="navbar-text">达梦数据库对比工具</span>
+            <button class="btn btn-sm btn-outline-light ms-auto" onclick="toggleTheme()" id="themeToggle" style="font-size:13px">🌙 夜间</button>
         </div>
     </nav>
 
@@ -134,10 +141,49 @@
                 </button>
             </div>
         </div>
+
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span><strong>配置管理</strong></span>
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-2 align-items-end">
+                            <div class="col-md-4">
+                                <label class="form-label">配置名称</label>
+                                <input type="text" id="configName" class="form-control form-control-sm" placeholder="输入配置名称">
+                            </div>
+                            <div class="col-md-2">
+                                <button class="btn btn-primary btn-sm w-100" onclick="saveConfig()">保存配置</button>
+                            </div>
+                            <div class="col-md-4">
+                                <select id="configSelect" class="form-select form-select-sm" onchange="loadConfig(this.value)">
+                                    <option value="">选择已保存的配置...</option>
+                                </select>
+                            </div>
+                            <div class="col-md-2">
+                                <button class="btn btn-outline-secondary btn-sm w-100" onclick="refreshConfigList()">刷新列表</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        function toggleTheme() {
+            const html = document.documentElement;
+            const isDark = html.getAttribute('data-bs-theme') === 'dark';
+            html.setAttribute('data-bs-theme', isDark ? 'light' : 'dark');
+            document.getElementById('themeToggle').textContent = isDark ? '🌙 夜间' : '☀️ 日间';
+            localStorage.setItem('dm-diff-theme', isDark ? 'light' : 'dark');
+        }
+        const savedTheme = localStorage.getItem('dm-diff-theme');
+        if (savedTheme) document.documentElement.setAttribute('data-bs-theme', savedTheme);
+
         let sourceConnected = false;
         let targetConnected = false;
 
@@ -150,6 +196,7 @@
             if (targetHost && targetHost.trim()) {
                 testConnection('target');
             }
+            refreshConfigList();
         });
 
         async function testConnection(type) {
@@ -293,6 +340,66 @@
 
         function goToDashboard() {
             window.location.href = '/dashboard';
+        }
+
+        async function saveConfig() {
+            const name = document.getElementById('configName').value.trim();
+            if (!name) { showToast('请输入配置名称', 'warning'); return; }
+            const config = {
+                name: name,
+                sourceConfig: { host: document.getElementById('sourceHost').value, port: parseInt(document.getElementById('sourcePort').value), database: document.getElementById('sourceDatabase').value, username: document.getElementById('sourceUsername').value, password: document.getElementById('sourcePassword').value },
+                targetConfig: { host: document.getElementById('targetHost').value, port: parseInt(document.getElementById('targetPort').value), database: document.getElementById('targetDatabase').value, username: document.getElementById('targetUsername').value, password: document.getElementById('targetPassword').value }
+            };
+            try {
+                const resp = await fetch('/save-config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(config) });
+                const data = await resp.json();
+                showToast(data.success ? '配置已保存' : '保存失败: ' + (data.message || ''), data.success ? 'success' : 'danger');
+                if (data.success) refreshConfigList();
+            } catch(e) { showToast('保存失败: ' + e.message, 'danger'); }
+        }
+
+        async function refreshConfigList() {
+            try {
+                const resp = await fetch('/list-configs');
+                const names = await resp.json();
+                const select = document.getElementById('configSelect');
+                select.innerHTML = '<option value="">选择已保存的配置...</option>';
+                names.forEach(n => { select.innerHTML += '<option value="' + n + '">' + n + '</option>'; });
+            } catch(e) { console.error('获取配置列表失败', e); }
+        }
+
+        function showToast(message, type) {
+            const container = document.getElementById('toastContainer') || document.body;
+            const toastEl = document.createElement('div');
+            toastEl.className = 'toast align-items-center text-bg-' + type + ' border-0 mb-2';
+            toastEl.role = 'alert';
+            toastEl.innerHTML = '<div class="d-flex"><div class="toast-body">' + message + '</div><button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast"></button></div>';
+            container.appendChild(toastEl);
+            new bootstrap.Toast(toastEl, {delay: 3000}).show();
+        }
+
+        async function loadConfig(name) {
+            if (!name) return;
+            try {
+                const resp = await fetch('/load-config?name=' + encodeURIComponent(name));
+                const config = await resp.json();
+                if (config.error) { showToast('加载失败: ' + config.error, 'danger'); return; }
+                if (config.sourceConfig) {
+                    document.getElementById('sourceHost').value = config.sourceConfig.host || '';
+                    document.getElementById('sourcePort').value = config.sourceConfig.port || '';
+                    document.getElementById('sourceDatabase').value = config.sourceConfig.database || '';
+                    document.getElementById('sourceUsername').value = config.sourceConfig.username || '';
+                    document.getElementById('sourcePassword').value = config.sourceConfig.password || '';
+                }
+                if (config.targetConfig) {
+                    document.getElementById('targetHost').value = config.targetConfig.host || '';
+                    document.getElementById('targetPort').value = config.targetConfig.port || '';
+                    document.getElementById('targetDatabase').value = config.targetConfig.database || '';
+                    document.getElementById('targetUsername').value = config.targetConfig.username || '';
+                    document.getElementById('targetPassword').value = config.targetConfig.password || '';
+                }
+                showToast('配置已加载', 'success');
+            } catch(e) { showToast('加载失败: ' + e.message, 'danger'); }
         }
     </script>
 </body>
