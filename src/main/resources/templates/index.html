@@ -13,6 +13,27 @@
             font-size: 12px;
             padding: 4px 10px;
         }
+        /* 优化移动端布局 */
+        @media (max-width: 768px) {
+            .connection-panel {
+                min-height: 300px;
+            }
+        }
+        .loading-spinner {
+            display: none;
+            justify-content: center;
+            align-items: center;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.8);
+            z-index: 10;
+        }
+        .loading-spinner.active {
+            display: flex;
+        }
     </style>
 </head>
 <body>
@@ -134,7 +155,11 @@
         async function testConnection(type) {
             const prefix = type === 'source' ? 'source' : 'target';
             const url = `/test-${type}`;
-            
+            const spinner = document.createElement('div');
+            spinner.className = 'loading-spinner active';
+            spinner.innerHTML = '<div class="spinner-border text-primary" role="status"><span class="visually-hidden">加载中...</span></div>';
+            document.body.appendChild(spinner);
+
             const data = {
                 host: document.getElementById(`${prefix}Host`).value,
                 port: parseInt(document.getElementById(`${prefix}Port`).value),
@@ -151,10 +176,10 @@
                     },
                     body: JSON.stringify(data)
                 });
-                
+
                 const result = await response.json();
                 const statusDiv = document.getElementById(`${prefix}Status`);
-                
+
                 if (result.success) {
                     statusDiv.innerHTML = `
                         <div class="alert alert-success">
@@ -164,7 +189,7 @@
                         </div>
                     `;
                     type === 'source' ? sourceConnected = true : targetConnected = true;
-                    
+
                     await loadDatabases(type, data);
                 } else {
                     statusDiv.innerHTML = `
@@ -174,10 +199,18 @@
                     `;
                     type === 'source' ? sourceConnected = false : targetConnected = false;
                 }
-                
+
                 updateNextButton();
             } catch (error) {
+                const statusDiv = document.getElementById(`${prefix}Status`);
+                statusDiv.innerHTML = `
+                    <div class="alert alert-danger">
+                        <strong>连接失败:</strong> 网络错误或服务器未响应。
+                    </div>
+                `;
                 console.error('Error:', error);
+            } finally {
+                document.body.removeChild(spinner);
             }
         }
 
@@ -186,9 +219,9 @@
             const select = document.getElementById(`${prefix}Database`);
             const input = document.getElementById(`${prefix}DatabaseInput`);
             const currentValue = select.value;
-            
+
             select.innerHTML = '<option value="">加载中...</option>';
-            
+
             try {
                 const response = await fetch('/get-databases', {
                     method: 'POST',
@@ -197,9 +230,9 @@
                     },
                     body: JSON.stringify(data)
                 });
-                
+
                 const databases = await response.json();
-                
+
                 select.innerHTML = '';
                 if (databases && databases.length > 0) {
                     databases.forEach(db => {
