@@ -502,7 +502,15 @@ public class DmDiffController {
             ObjectMapper mapper = new ObjectMapper();
             Map<String, Object> config = mapper.readValue(configFile, new TypeReference<Map<String, Object>>() {});
             result.put("success", true);
-            result.put("config", config);
+
+            Object sourceConfig = config.get("sourceConfig");
+            Object targetConfig = config.get("targetConfig");
+            if (sourceConfig instanceof Map) {
+                result.put("sourceConfig", sourceConfig);
+            }
+            if (targetConfig instanceof Map) {
+                result.put("targetConfig", targetConfig);
+            }
         } catch (IOException e) {
             logger.error("加载配置失败: {}", e.getMessage());
             result.put("success", false);

@@ -210,7 +210,7 @@
             const data = {
                 host: document.getElementById(`${prefix}Host`).value,
                 port: parseInt(document.getElementById(`${prefix}Port`).value),
-                database: document.getElementById(`${prefix}Database`).value || document.getElementById(`${prefix}Username`).value,
+                database: getDbValue(prefix) || document.getElementById(`${prefix}Username`).value,
                 username: document.getElementById(`${prefix}Username`).value,
                 password: document.getElementById(`${prefix}Password`).value
             };
@@ -295,7 +295,7 @@
                     } else {
                         select.value = databases[0];
                     }
-                    saveConfig(type);
+                    syncSchemaToServer(type);
                 } else {
                     select.innerHTML = '<option value="">未找到数据库</option>';
                     input.style.display = 'block';
@@ -314,7 +314,7 @@
             nextBtn.disabled = !(sourceConnected && targetConnected);
         }
 
-        function saveConfig(type) {
+        function syncSchemaToServer(type) {
             const prefix = type === 'source' ? 'source' : 'target';
             const url = `/test-${type}`;
             const data = {
@@ -328,18 +328,36 @@
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(data)
+            }).then(function (resp) {
+                return resp.json();
+            }).then(function (result) {
+                const statusDiv = document.getElementById(prefix + 'Status');
+                if (result.success) {
+                    type === 'source' ? sourceConnected = true : targetConnected = true;
+                    statusDiv.innerHTML = '<div class="alert alert-success"><strong>模式已切换</strong><br>数据库版本: ' + (result.dbVersion || '-') + '</div>';
+                } else {
+                    type === 'source' ? sourceConnected = false : targetConnected = false;
+                    statusDiv.innerHTML = '<div class="alert alert-warning"><strong>模式切换失败</strong><br>' + (result.message || '未知错误') + '</div>';
+                }
+                updateNextButton();
             });
         }
 
         document.getElementById('sourceDatabase').addEventListener('change', function() {
-            saveConfig('source');
+            syncSchemaToServer('source');
         });
         document.getElementById('targetDatabase').addEventListener('change', function() {
-            saveConfig('target');
+            syncSchemaToServer('target');
         });
 
         function goToDashboard() {
             window.location.href = '/dashboard';
+        }
+
+        function getDbValue(prefix) {
+            const select = document.getElementById(prefix + 'Database');
+            const input = document.getElementById(prefix + 'DatabaseInput');
+            return select.style.display !== 'none' ? select.value : input.value;
         }
 
         async function saveConfig() {
@@ -347,8 +365,8 @@
             if (!name) { showToast('请输入配置名称', 'warning'); return; }
             const config = {
                 name: name,
-                sourceConfig: { host: document.getElementById('sourceHost').value, port: parseInt(document.getElementById('sourcePort').value), database: document.getElementById('sourceDatabase').value, username: document.getElementById('sourceUsername').value, password: document.getElementById('sourcePassword').value },
-                targetConfig: { host: document.getElementById('targetHost').value, port: parseInt(document.getElementById('targetPort').value), database: document.getElementById('targetDatabase').value, username: document.getElementById('targetUsername').value, password: document.getElementById('targetPassword').value }
+                sourceConfig: { host: document.getElementById('sourceHost').value, port: parseInt(document.getElementById('sourcePort').value), database: getDbValue('source'), username: document.getElementById('sourceUsername').value, password: document.getElementById('sourcePassword').value },
+                targetConfig: { host: document.getElementById('targetHost').value, port: parseInt(document.getElementById('targetPort').value), database: getDbValue('target'), username: document.getElementById('targetUsername').value, password: document.getElementById('targetPassword').value }
             };
             try {
                 const resp = await fetch('/save-config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(config) });
@@ -383,22 +401,38 @@
             try {
                 const resp = await fetch('/load-config?name=' + encodeURIComponent(name));
                 const config = await resp.json();
-                if (config.error) { showToast('加载失败: ' + config.error, 'danger'); return; }
-                if (config.sourceConfig) {
-                    document.getElementById('sourceHost').value = config.sourceConfig.host || '';
-                    document.getElementById('sourcePort').value = config.sourceConfig.port || '';
-                    document.getElementById('sourceDatabase').value = config.sourceConfig.database || '';
-                    document.getElementById('sourceUsername').value = config.sourceConfig.username || '';
-                    document.getElementById('sourcePassword').value = config.sourceConfig.password || '';
+                if (!config.success) { showToast('加载失败: ' + (config.message || ''), 'danger'); return; }
+
+                function fillConfig(prefix, cfg) {
+                    if (!cfg) return;
+                    document.getElementById(prefix + 'Host').value = cfg.host || '';
+                    document.getElementById(prefix + 'Port').value = cfg.port || '5236';
+                    document.getElementById(prefix + 'Username').value = cfg.username || '';
+                    document.getElementById(prefix + 'Password').value = cfg.password || '';
+
+                    const select = document.getElementById(prefix + 'Database');
+                    const input = document.getElementById(prefix + 'DatabaseInput');
+                    const dbVal = cfg.database || '';
+                    if (dbVal) {
+                        const exists = Array.from(select.options).some(o => o.value === dbVal);
+                        if (exists) {
+                            select.value = dbVal;
+                            select.style.display = 'block';
+                            input.style.display = 'none';
+                        } else {
+                            input.value = dbVal;
+                            input.style.display = 'block';
+                            select.style.display = 'none';
+                        }
+                    }
                 }
-                if (config.targetConfig) {
-                    document.getElementById('targetHost').value = config.targetConfig.host || '';
-                    document.getElementById('targetPort').value = config.targetConfig.port || '';
-                    document.getElementById('targetDatabase').value = config.targetConfig.database || '';
-                    document.getElementById('targetUsername').value = config.targetConfig.username || '';
-                    document.getElementById('targetPassword').value = config.targetConfig.password || '';
-                }
-                showToast('配置已加载', 'success');
+
+                fillConfig('source', config.sourceConfig);
+                fillConfig('target', config.targetConfig);
+
+                showToast('配置已加载，正在重新连接...', 'info');
+                testConnection('source');
+                testConnection('target');
             } catch(e) { showToast('加载失败: ' + e.message, 'danger'); }
         }
     </script>
