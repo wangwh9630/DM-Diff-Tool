@@ -37,3 +37,6 @@ dm-diff-tool.jar.original
 # 外部配置（含密码，不应提交）
 # 注意：application.yml 如果包含密码，建议使用模板文件
 # 提交 application.yml.example 作为模板
+
+# 用户保存的比对配置文件
+configs/
