@@ -79,6 +79,7 @@ public class DiffService {
             
             if (!targetTableMap.containsKey(key)) {
                 TableDiff diff = new TableDiff(sourceTable.getTableName(), DiffType.DELETE);
+                diff.setSchemaName(sourceTable.getSchemaName());
                 for (ColumnInfo col : sourceTable.getColumns()) {
                     ColumnDiff colDiff = new ColumnDiff(col.getColumnName(), DiffType.DELETE);
                     colDiff.setSourceColumn(col);
@@ -99,6 +100,7 @@ public class DiffService {
             
             if (!sourceTableMap.containsKey(key)) {
                 TableDiff diff = new TableDiff(targetTable.getTableName(), DiffType.ADD);
+                diff.setSchemaName(targetTable.getSchemaName());
                 for (ColumnInfo col : targetTable.getColumns()) {
                     ColumnDiff colDiff = new ColumnDiff(col.getColumnName(), DiffType.ADD);
                     colDiff.setTargetColumn(col);
@@ -125,6 +127,7 @@ public class DiffService {
 
     private TableDiff compareTableDetails(TableInfo sourceTable, TableInfo targetTable, boolean ignoreCase) {
         TableDiff diff = new TableDiff(sourceTable.getTableName(), DiffType.MODIFY);
+        diff.setSchemaName(sourceTable.getSchemaName());
         
         compareColumns(sourceTable.getColumns(), targetTable.getColumns(), diff, ignoreCase);
         compareIndexes(sourceTable.getIndexes(), targetTable.getIndexes(), diff, ignoreCase);

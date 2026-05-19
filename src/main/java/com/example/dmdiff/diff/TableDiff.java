@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class TableDiff {
+    private String schemaName;
     private String tableName;
     private DiffType diffType;
     private List<ColumnDiff> columnDiffs;
@@ -27,6 +28,14 @@ public class TableDiff {
         this.indexDiffs = new ArrayList<>();
         this.triggerDiffs = new ArrayList<>();
         this.foreignKeyDiffs = new ArrayList<>();
+    }
+
+    public String getSchemaName() {
+        return schemaName;
+    }
+
+    public void setSchemaName(String schemaName) {
+        this.schemaName = schemaName;
     }
 
     public String getTableName() {

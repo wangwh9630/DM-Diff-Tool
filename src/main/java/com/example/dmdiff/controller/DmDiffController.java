@@ -164,7 +164,7 @@ public class DmDiffController {
     private List<SqlStatement> executeStatements(List<SqlStatement> statements) {
         for (SqlStatement stmt : statements) {
             try {
-                databaseService.executeSql(targetConfig, stmt.getSql());
+                databaseService.executeSql(sourceConfig, stmt.getSql());
                 stmt.setSuccess(true);
             } catch (SQLException e) {
                 stmt.setSuccess(false);

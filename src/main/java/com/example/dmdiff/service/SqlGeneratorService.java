@@ -15,6 +15,8 @@ import java.util.List;
 public class SqlGeneratorService {
     private static final Logger logger = LoggerFactory.getLogger(SqlGeneratorService.class);
 
+    // ==================== 文本展示用方法（保留原有，方便界面展示） ====================
+
     public String generateUpgradeSql(DiffResult diffResult) {
         StringBuilder sql = new StringBuilder();
         
@@ -27,7 +29,7 @@ public class SqlGeneratorService {
         }
         
         for (TableDiff tableDiff : diffResult.getDeletedTables()) {
-            sql.append(generateDropTableSql(tableDiff.getTableName())).append("\n\n");
+            sql.append(generateDropTableSql(tableDiff)).append("\n\n");
         }
         
         return sql.toString();
@@ -45,17 +47,31 @@ public class SqlGeneratorService {
         }
         
         for (TableDiff tableDiff : diffResult.getAddedTables()) {
-            sql.append(generateDropTableSql(tableDiff.getTableName())).append("\n\n");
+            sql.append(generateDropTableSql(tableDiff)).append("\n\n");
         }
         
         return sql.toString();
     }
 
+    // ==================== 逐条执行用方法（核心修复） ====================
+
     public List<SqlStatement> generateCreate(DiffResult diffResult) {
         List<SqlStatement> statements = new ArrayList<>();
         for (TableDiff tableDiff : diffResult.getAddedTables()) {
-            String sql = generateCreateTableSql(tableDiff);
-            statements.add(new SqlStatement(tableDiff.getTableName(), sql, "ADD"));
+            String tableOnlySql = generateCreateTableOnlySql(tableDiff);
+            statements.add(new SqlStatement(tableDiff.getTableName(), tableOnlySql, "ADD"));
+            if (tableDiff.getIndexDiffs() != null) {
+                for (IndexDiff idxDiff : tableDiff.getIndexDiffs()) {
+                    IndexInfo index = idxDiff.getTargetIndex();
+                    if (index == null) {
+                        index = idxDiff.getSourceIndex();
+                    }
+                    if (index != null) {
+                        String idxSql = generateCreateIndexSql(getQualifiedName(tableDiff), index);
+                        statements.add(new SqlStatement(tableDiff.getTableName(), idxSql, "ADD"));
+                    }
+                }
+            }
         }
         return statements;
     }
@@ -63,8 +79,7 @@ public class SqlGeneratorService {
     public List<SqlStatement> generateAlter(DiffResult diffResult) {
         List<SqlStatement> statements = new ArrayList<>();
         for (TableDiff tableDiff : diffResult.getModifiedTables()) {
-            String sql = generateAlterTableSql(tableDiff);
-            statements.add(new SqlStatement(tableDiff.getTableName(), sql, "MODIFY"));
+            statements.addAll(generateAlterStatements(tableDiff));
         }
         return statements;
     }
@@ -72,7 +87,7 @@ public class SqlGeneratorService {
     public List<SqlStatement> generateDrop(DiffResult diffResult) {
         List<SqlStatement> statements = new ArrayList<>();
         for (TableDiff tableDiff : diffResult.getDeletedTables()) {
-            String sql = generateDropTableSql(tableDiff.getTableName());
+            String sql = generateDropTableSql(tableDiff);
             statements.add(new SqlStatement(tableDiff.getTableName(), sql, "DELETE"));
         }
         return statements;
@@ -81,18 +96,107 @@ public class SqlGeneratorService {
     public List<SqlStatement> rollbackAll(DiffResult diffResult) {
         List<SqlStatement> statements = new ArrayList<>();
         for (TableDiff tableDiff : diffResult.getDeletedTables()) {
-            String sql = generateCreateTableSql(tableDiff);
+            String sql = generateCreateTableOnlySql(tableDiff);
             statements.add(new SqlStatement(tableDiff.getTableName(), sql, "ROLLBACK_CREATE"));
+            if (tableDiff.getIndexDiffs() != null) {
+                for (IndexDiff idxDiff : tableDiff.getIndexDiffs()) {
+                    IndexInfo index = idxDiff.getSourceIndex();
+                    if (index != null) {
+                        String idxSql = generateCreateIndexSql(getQualifiedName(tableDiff), index);
+                        statements.add(new SqlStatement(tableDiff.getTableName(), idxSql, "ROLLBACK_CREATE"));
+                    }
+                }
+            }
         }
         for (TableDiff tableDiff : diffResult.getModifiedTables()) {
-            String sql = generateRollbackAlterTableSql(tableDiff);
-            statements.add(new SqlStatement(tableDiff.getTableName(), sql, "ROLLBACK_MODIFY"));
+            statements.addAll(generateRollbackAlterStatements(tableDiff));
         }
         for (TableDiff tableDiff : diffResult.getAddedTables()) {
-            String sql = generateDropTableSql(tableDiff.getTableName());
+            String sql = generateDropTableSql(tableDiff);
             statements.add(new SqlStatement(tableDiff.getTableName(), sql, "ROLLBACK_DROP"));
         }
         return statements;
+    }
+
+    // ==================== 拆分 ALTER 为逐条语句 ====================
+
+    private List<SqlStatement> generateAlterStatements(TableDiff tableDiff) {
+        List<SqlStatement> statements = new ArrayList<>();
+        String qualifiedName = getQualifiedName(tableDiff);
+
+        for (IndexDiff idxDiff : tableDiff.getIndexDiffs()) {
+            if (idxDiff.getDiffType() == DiffType.DELETE) {
+                String sql = generateDropIndexSql(qualifiedName, idxDiff.getSourceIndex());
+                statements.add(new SqlStatement(tableDiff.getTableName(), sql, "MODIFY"));
+            } else if (idxDiff.getDiffType() == DiffType.ADD) {
+                String sql = generateCreateIndexSql(qualifiedName, idxDiff.getTargetIndex());
+                statements.add(new SqlStatement(tableDiff.getTableName(), sql, "MODIFY"));
+            } else if (idxDiff.getDiffType() == DiffType.MODIFY) {
+                String dropSql = generateDropIndexSql(qualifiedName, idxDiff.getSourceIndex());
+                statements.add(new SqlStatement(tableDiff.getTableName(), dropSql, "MODIFY"));
+                String createSql = generateCreateIndexSql(qualifiedName, idxDiff.getTargetIndex());
+                statements.add(new SqlStatement(tableDiff.getTableName(), createSql, "MODIFY"));
+            }
+        }
+
+        for (ColumnDiff colDiff : tableDiff.getColumnDiffs()) {
+            if (colDiff.getDiffType() == DiffType.DELETE) {
+                String sql = generateDropColumnSql(qualifiedName, colDiff.getSourceColumn());
+                statements.add(new SqlStatement(tableDiff.getTableName(), sql, "MODIFY"));
+            } else if (colDiff.getDiffType() == DiffType.ADD) {
+                String sql = generateAddColumnSql(qualifiedName, colDiff.getTargetColumn());
+                statements.add(new SqlStatement(tableDiff.getTableName(), sql, "MODIFY"));
+            } else if (colDiff.getDiffType() == DiffType.MODIFY) {
+                String sql = generateModifyColumnSql(qualifiedName, colDiff.getTargetColumn());
+                statements.add(new SqlStatement(tableDiff.getTableName(), sql, "MODIFY"));
+            }
+        }
+
+        return statements;
+    }
+
+    private List<SqlStatement> generateRollbackAlterStatements(TableDiff tableDiff) {
+        List<SqlStatement> statements = new ArrayList<>();
+        String qualifiedName = getQualifiedName(tableDiff);
+
+        for (IndexDiff idxDiff : tableDiff.getIndexDiffs()) {
+            if (idxDiff.getDiffType() == DiffType.ADD) {
+                String sql = generateDropIndexSql(qualifiedName, idxDiff.getTargetIndex());
+                statements.add(new SqlStatement(tableDiff.getTableName(), sql, "ROLLBACK_MODIFY"));
+            } else if (idxDiff.getDiffType() == DiffType.DELETE) {
+                String sql = generateCreateIndexSql(qualifiedName, idxDiff.getSourceIndex());
+                statements.add(new SqlStatement(tableDiff.getTableName(), sql, "ROLLBACK_MODIFY"));
+            } else if (idxDiff.getDiffType() == DiffType.MODIFY) {
+                String dropSql = generateDropIndexSql(qualifiedName, idxDiff.getTargetIndex());
+                statements.add(new SqlStatement(tableDiff.getTableName(), dropSql, "ROLLBACK_MODIFY"));
+                String createSql = generateCreateIndexSql(qualifiedName, idxDiff.getSourceIndex());
+                statements.add(new SqlStatement(tableDiff.getTableName(), createSql, "ROLLBACK_MODIFY"));
+            }
+        }
+
+        for (ColumnDiff colDiff : tableDiff.getColumnDiffs()) {
+            if (colDiff.getDiffType() == DiffType.ADD) {
+                String sql = generateDropColumnSql(qualifiedName, colDiff.getTargetColumn());
+                statements.add(new SqlStatement(tableDiff.getTableName(), sql, "ROLLBACK_MODIFY"));
+            } else if (colDiff.getDiffType() == DiffType.DELETE) {
+                String sql = generateAddColumnSql(qualifiedName, colDiff.getSourceColumn());
+                statements.add(new SqlStatement(tableDiff.getTableName(), sql, "ROLLBACK_MODIFY"));
+            } else if (colDiff.getDiffType() == DiffType.MODIFY) {
+                String sql = generateModifyColumnSql(qualifiedName, colDiff.getSourceColumn());
+                statements.add(new SqlStatement(tableDiff.getTableName(), sql, "ROLLBACK_MODIFY"));
+            }
+        }
+
+        return statements;
+    }
+
+    // ==================== SQL 语句生成 ====================
+
+    private String getQualifiedName(TableDiff tableDiff) {
+        if (tableDiff.getSchemaName() != null && !tableDiff.getSchemaName().isEmpty()) {
+            return tableDiff.getSchemaName() + "." + tableDiff.getTableName();
+        }
+        return tableDiff.getTableName();
     }
 
     private String generateCreateTableSql(TableDiff tableDiff) {
@@ -136,10 +240,47 @@ public class SqlGeneratorService {
                     index = idxDiff.getSourceIndex();
                 }
                 if (index != null) {
-                    sql.append("\n").append(generateCreateIndexSql(tableDiff.getTableName(), index));
+                    sql.append("\n").append(generateCreateIndexSql(tableName, index));
                 }
             }
         }
+
+        return sql.toString();
+    }
+
+    private String generateCreateTableOnlySql(TableDiff tableDiff) {
+        StringBuilder sql = new StringBuilder();
+        String tableName = getQualifiedName(tableDiff);
+        sql.append("-- 创建表 ").append(tableDiff.getTableName()).append("\n");
+        sql.append("CREATE TABLE ").append(tableName).append(" (\n");
+
+        List<ColumnDiff> columnDiffs = tableDiff.getColumnDiffs();
+        List<String> columnDefs = new ArrayList<>();
+
+        for (ColumnDiff colDiff : columnDiffs) {
+            ColumnInfo column = colDiff.getTargetColumn();
+            if (column == null) {
+                column = colDiff.getSourceColumn();
+            }
+            if (column == null) continue;
+
+            StringBuilder colDef = new StringBuilder();
+            colDef.append("    ").append(column.getColumnName())
+                  .append(" ").append(adjustTypeForDm(column));
+
+            if (!column.isNullable()) {
+                colDef.append(" NOT NULL");
+            }
+
+            if (column.getDefaultValue() != null && !column.getDefaultValue().isEmpty()) {
+                colDef.append(" DEFAULT '").append(column.getDefaultValue()).append("'");
+            }
+
+            columnDefs.add(colDef.toString());
+        }
+
+        sql.append(String.join(",\n", columnDefs));
+        sql.append("\n);");
 
         return sql.toString();
     }
@@ -154,17 +295,14 @@ public class SqlGeneratorService {
         return dataType;
     }
 
-    private String getQualifiedName(TableDiff tableDiff) {
-        return tableDiff.getTableName();
-    }
-
-    private String generateDropTableSql(String tableName) {
-        return String.format("-- 删除表 %s\nDROP TABLE %s;", tableName, tableName);
+    private String generateDropTableSql(TableDiff tableDiff) {
+        String qualifiedName = getQualifiedName(tableDiff);
+        return String.format("-- 删除表 %s\nDROP TABLE %s;", tableDiff.getTableName(), qualifiedName);
     }
 
     private String generateAlterTableSql(TableDiff tableDiff) {
         StringBuilder sql = new StringBuilder();
-        String tableName = tableDiff.getTableName();
+        String qualifiedName = getQualifiedName(tableDiff);
         
         List<String> dropIndexes = new ArrayList<>();
         List<String> dropConstraints = new ArrayList<>();
@@ -176,22 +314,22 @@ public class SqlGeneratorService {
         
         for (IndexDiff idxDiff : tableDiff.getIndexDiffs()) {
             if (idxDiff.getDiffType() == DiffType.DELETE) {
-                dropIndexes.add(generateDropIndexSql(tableName, idxDiff.getSourceIndex()));
+                dropIndexes.add(generateDropIndexSql(qualifiedName, idxDiff.getSourceIndex()));
             } else if (idxDiff.getDiffType() == DiffType.ADD) {
-                addIndexes.add(generateCreateIndexSql(tableName, idxDiff.getTargetIndex()));
+                addIndexes.add(generateCreateIndexSql(qualifiedName, idxDiff.getTargetIndex()));
             } else if (idxDiff.getDiffType() == DiffType.MODIFY) {
-                dropIndexes.add(generateDropIndexSql(tableName, idxDiff.getSourceIndex()));
-                addIndexes.add(generateCreateIndexSql(tableName, idxDiff.getTargetIndex()));
+                dropIndexes.add(generateDropIndexSql(qualifiedName, idxDiff.getSourceIndex()));
+                addIndexes.add(generateCreateIndexSql(qualifiedName, idxDiff.getTargetIndex()));
             }
         }
         
         for (ColumnDiff colDiff : tableDiff.getColumnDiffs()) {
             if (colDiff.getDiffType() == DiffType.DELETE) {
-                dropColumns.add(generateDropColumnSql(tableName, colDiff.getSourceColumn()));
+                dropColumns.add(generateDropColumnSql(qualifiedName, colDiff.getSourceColumn()));
             } else if (colDiff.getDiffType() == DiffType.ADD) {
-                addColumns.add(generateAddColumnSql(tableName, colDiff.getTargetColumn()));
+                addColumns.add(generateAddColumnSql(qualifiedName, colDiff.getTargetColumn()));
             } else if (colDiff.getDiffType() == DiffType.MODIFY) {
-                modifyColumns.add(generateModifyColumnSql(tableName, colDiff.getTargetColumn()));
+                modifyColumns.add(generateModifyColumnSql(qualifiedName, colDiff.getTargetColumn()));
             }
         }
         
@@ -203,12 +341,12 @@ public class SqlGeneratorService {
         for (String s : addConstraints) { sql.append(s).append("\n"); }
         for (String s : addIndexes) { sql.append(s).append("\n"); }
         
-        return sql.toString();
+        return sql.toString().trim();
     }
 
     private String generateRollbackAlterTableSql(TableDiff tableDiff) {
         StringBuilder sql = new StringBuilder();
-        String tableName = tableDiff.getTableName();
+        String qualifiedName = getQualifiedName(tableDiff);
         
         List<String> dropIndexes = new ArrayList<>();
         List<String> dropColumns = new ArrayList<>();
@@ -218,22 +356,22 @@ public class SqlGeneratorService {
         
         for (IndexDiff idxDiff : tableDiff.getIndexDiffs()) {
             if (idxDiff.getDiffType() == DiffType.ADD) {
-                dropIndexes.add(generateDropIndexSql(tableName, idxDiff.getTargetIndex()));
+                dropIndexes.add(generateDropIndexSql(qualifiedName, idxDiff.getTargetIndex()));
             } else if (idxDiff.getDiffType() == DiffType.DELETE) {
-                addIndexes.add(generateCreateIndexSql(tableName, idxDiff.getSourceIndex()));
+                addIndexes.add(generateCreateIndexSql(qualifiedName, idxDiff.getSourceIndex()));
             } else if (idxDiff.getDiffType() == DiffType.MODIFY) {
-                dropIndexes.add(generateDropIndexSql(tableName, idxDiff.getTargetIndex()));
-                addIndexes.add(generateCreateIndexSql(tableName, idxDiff.getSourceIndex()));
+                dropIndexes.add(generateDropIndexSql(qualifiedName, idxDiff.getTargetIndex()));
+                addIndexes.add(generateCreateIndexSql(qualifiedName, idxDiff.getSourceIndex()));
             }
         }
         
         for (ColumnDiff colDiff : tableDiff.getColumnDiffs()) {
             if (colDiff.getDiffType() == DiffType.ADD) {
-                dropColumns.add(generateDropColumnSql(tableName, colDiff.getTargetColumn()));
+                dropColumns.add(generateDropColumnSql(qualifiedName, colDiff.getTargetColumn()));
             } else if (colDiff.getDiffType() == DiffType.DELETE) {
-                addColumns.add(generateAddColumnSql(tableName, colDiff.getSourceColumn()));
+                addColumns.add(generateAddColumnSql(qualifiedName, colDiff.getSourceColumn()));
             } else if (colDiff.getDiffType() == DiffType.MODIFY) {
-                modifyColumns.add(generateModifyColumnSql(tableName, colDiff.getSourceColumn()));
+                modifyColumns.add(generateModifyColumnSql(qualifiedName, colDiff.getSourceColumn()));
             }
         }
         
@@ -243,7 +381,7 @@ public class SqlGeneratorService {
         for (String s : modifyColumns) { sql.append(s).append("\n"); }
         for (String s : addIndexes) { sql.append(s).append("\n"); }
         
-        return sql.toString();
+        return sql.toString().trim();
     }
 
     private String generateDropIndexSql(String tableName, IndexInfo index) {
