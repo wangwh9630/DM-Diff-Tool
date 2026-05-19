@@ -320,64 +320,23 @@
         }
 
         function toggleSection(prefix) {
-            if (prefix === 'add') {
-                const firstCollapse = document.querySelector('[id^="add-body-"]');
-                if (!firstCollapse) return;
-                const allExpanded = firstCollapse.classList.contains('show');
-                document.querySelectorAll('[id^="add-body-"]').forEach(function(el) {
-                    const bsCollapse = bootstrap.Collapse.getOrCreateInstance(el);
-                    if (allExpanded) {
-                        bsCollapse.hide();
-                    } else {
-                        bsCollapse.show();
-                    }
-                });
-                document.querySelectorAll('#section-add .arrow').forEach(function(arrow) {
-                    if (allExpanded) {
-                        arrow.classList.remove('expanded');
-                    } else {
-                        arrow.classList.add('expanded');
-                    }
-                });
-            } else if (prefix === 'del') {
-                const firstCollapse = document.querySelector('[id^="del-body-"]');
-                if (!firstCollapse) return;
-                const allExpanded = firstCollapse.classList.contains('show');
-                document.querySelectorAll('[id^="del-body-"]').forEach(function(el) {
-                    const bsCollapse = bootstrap.Collapse.getOrCreateInstance(el);
-                    if (allExpanded) {
-                        bsCollapse.hide();
-                    } else {
-                        bsCollapse.show();
-                    }
-                });
-                document.querySelectorAll('#section-delete .arrow').forEach(function(arrow) {
-                    if (allExpanded) {
-                        arrow.classList.remove('expanded');
-                    } else {
-                        arrow.classList.add('expanded');
-                    }
-                });
-            } else if (prefix === 'mod') {
-                const firstCollapse = document.querySelector('[id^="mod-body-"]');
-                if (!firstCollapse) return;
-                const allExpanded = firstCollapse.classList.contains('show');
-                document.querySelectorAll('[id^="mod-body-"]').forEach(function(el) {
-                    const bsCollapse = bootstrap.Collapse.getOrCreateInstance(el);
-                    if (allExpanded) {
-                        bsCollapse.hide();
-                    } else {
-                        bsCollapse.show();
-                    }
-                });
-                document.querySelectorAll('#section-modify .arrow').forEach(function(arrow) {
-                    if (allExpanded) {
-                        arrow.classList.remove('expanded');
-                    } else {
-                        arrow.classList.add('expanded');
-                    }
-                });
-            }
+            const bodyPrefix = prefix === 'add' ? 'add-body-' :
+                               prefix === 'del' ? 'del-body-' :
+                               prefix === 'mod' ? 'mod-body-' : null;
+            const sectionId = prefix === 'add' ? 'section-add' :
+                              prefix === 'del' ? 'section-delete' :
+                              prefix === 'mod' ? 'section-modify' : null;
+            if (!bodyPrefix || !sectionId) return;
+
+            const firstCollapse = document.querySelector('[id^="' + bodyPrefix + '"]');
+            if (!firstCollapse) return;
+            const allExpanded = firstCollapse.classList.contains('show');
+            document.querySelectorAll('[id^="' + bodyPrefix + '"]').forEach(function(el) {
+                bootstrap.Collapse.getOrCreateInstance(el)[allExpanded ? 'hide' : 'show']();
+            });
+            document.querySelectorAll('#' + sectionId + ' .arrow').forEach(function(arrow) {
+                arrow.classList[allExpanded ? 'remove' : 'add']('expanded');
+            });
         }
 
         window.addEventListener('scroll', function() {

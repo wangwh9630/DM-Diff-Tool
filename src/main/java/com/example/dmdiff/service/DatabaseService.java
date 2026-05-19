@@ -58,18 +58,19 @@ public class DatabaseService {
         
         try (Connection conn = DriverManager.getConnection(
                 config.getJdbcUrl(), config.getUsername(), config.getPassword());
-             Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery(
-                 "SELECT TABLE_NAME FROM ALL_TABLES WHERE OWNER = '" + schema + "'")) {
-            
-            while (rs.next()) {
-                String tableName = rs.getString("TABLE_NAME");
-                
-                TableInfo table = new TableInfo(schema, tableName, "TABLE");
-                table.setColumns(getColumns(conn, schema, tableName));
-                table.setIndexes(getIndexes(conn, schema, tableName));
-                
-                tables.add(table);
+             PreparedStatement stmt = conn.prepareStatement(
+                 "SELECT TABLE_NAME FROM ALL_TABLES WHERE OWNER = ?")) {
+            stmt.setString(1, schema);
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    String tableName = rs.getString("TABLE_NAME");
+                    
+                    TableInfo table = new TableInfo(schema, tableName, "TABLE");
+                    table.setColumns(getColumns(conn, schema, tableName));
+                    table.setIndexes(getIndexes(conn, schema, tableName));
+                    
+                    tables.add(table);
+                }
             }
         }
         
@@ -111,14 +112,27 @@ public class DatabaseService {
                 if (indexName == null) continue;
                 
                 boolean unique = !rs.getBoolean("NON_UNIQUE");
+                String columnName = rs.getString("COLUMN_NAME");
                 
-                IndexInfo index = new IndexInfo();
-                index.setIndexName(indexName);
-                index.setUnique(unique);
-                index.setClustered(false);
-                index.addColumnName(rs.getString("COLUMN_NAME"));
+                IndexInfo existing = null;
+                for (IndexInfo idx : indexes) {
+                    if (idx.getIndexName().equals(indexName)) {
+                        existing = idx;
+                        break;
+                    }
+                }
                 
-                indexes.add(index);
+                if (existing == null) {
+                    existing = new IndexInfo();
+                    existing.setIndexName(indexName);
+                    existing.setUnique(unique);
+                    existing.setClustered(false);
+                    indexes.add(existing);
+                }
+                
+                if (columnName != null) {
+                    existing.addColumnName(columnName);
+                }
             }
         }
         
@@ -130,11 +144,12 @@ public class DatabaseService {
         logger.info("getTableCount: schema={}, jdbcUrl={}", schema, config.getJdbcUrl());
         try (Connection conn = DriverManager.getConnection(
                 config.getJdbcUrl(), config.getUsername(), config.getPassword());
-             Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM ALL_TABLES WHERE OWNER = '" + schema + "'")) {
-            
-            if (rs.next()) {
-                return rs.getInt(1);
+             PreparedStatement stmt = conn.prepareStatement("SELECT COUNT(*) FROM ALL_TABLES WHERE OWNER = ?")) {
+            stmt.setString(1, schema);
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getInt(1);
+                }
             }
         }
         return 0;
@@ -144,11 +159,12 @@ public class DatabaseService {
         String schema = config.getDatabase();
         try (Connection conn = DriverManager.getConnection(
                 config.getJdbcUrl(), config.getUsername(), config.getPassword());
-             Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM ALL_VIEWS WHERE OWNER = '" + schema + "'")) {
-            
-            if (rs.next()) {
-                return rs.getInt(1);
+             PreparedStatement stmt = conn.prepareStatement("SELECT COUNT(*) FROM ALL_VIEWS WHERE OWNER = ?")) {
+            stmt.setString(1, schema);
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getInt(1);
+                }
             }
         }
         return 0;
@@ -158,11 +174,12 @@ public class DatabaseService {
         String schema = config.getDatabase();
         try (Connection conn = DriverManager.getConnection(
                 config.getJdbcUrl(), config.getUsername(), config.getPassword());
-             Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM ALL_INDEXES WHERE OWNER = '" + schema + "'")) {
-            
-            if (rs.next()) {
-                return rs.getInt(1);
+             PreparedStatement stmt = conn.prepareStatement("SELECT COUNT(*) FROM ALL_INDEXES WHERE OWNER = ?")) {
+            stmt.setString(1, schema);
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getInt(1);
+                }
             }
         }
         return 0;
@@ -172,11 +189,12 @@ public class DatabaseService {
         String schema = config.getDatabase();
         try (Connection conn = DriverManager.getConnection(
                 config.getJdbcUrl(), config.getUsername(), config.getPassword());
-             Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM ALL_PROCEDURES WHERE OWNER = '" + schema + "'")) {
-            
-            if (rs.next()) {
-                return rs.getInt(1);
+             PreparedStatement stmt = conn.prepareStatement("SELECT COUNT(*) FROM ALL_PROCEDURES WHERE OWNER = ?")) {
+            stmt.setString(1, schema);
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getInt(1);
+                }
             }
         }
         return 0;
