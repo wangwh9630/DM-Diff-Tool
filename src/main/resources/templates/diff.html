@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DM-Diff - 比对结果</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .diff-type-add { background-color: #d4edda; border-left: 4px solid #28a745; }
+        .diff-type-delete { background-color: #f8d7da; border-left: 4px solid #dc3545; }
+        .diff-type-modify { background-color: #fff3cd; border-left: 4px solid #ffc107; }
+
+        .card-header-toggle { cursor: pointer; user-select: none; }
+        .card-header-toggle:hover { filter: brightness(0.95); }
+        .card-header-toggle .arrow {
+            transition: transform 0.25s ease;
+            font-size: 12px;
+            color: #888;
+        }
+        .card-header-toggle .arrow.expanded {
+            transform: rotate(180deg);
+        }
+
+        .sticky-bar {
+            position: sticky;
+            top: 0;
+            z-index: 1020;
+            background: white;
+            border-bottom: 2px solid #dee2e6;
+            padding: 12px 0;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+        .sticky-bar .container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .sticky-bar .stats {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .sticky-bar .stats .stat-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 14px;
+        }
+        .sticky-bar .actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 12px;
+            font-size: 13px;
+        }
+        .nav-links a {
+            text-decoration: none;
+            padding: 2px 8px;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+        .nav-links a:hover { background: #e9ecef; }
+
+        .back-to-top {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            background: #0d6efd;
+            color: white;
+            border: none;
+            font-size: 20px;
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1050;
+            transition: opacity 0.3s;
+        }
+        .back-to-top:hover { background: #0b5ed7; }
+        .back-to-top.visible { display: flex; }
+
+        .section-header {
+            scroll-margin-top: 80px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .section-header h3 { margin: 0; }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container">
+            <a class="navbar-brand" href="/">DM-Diff</a>
+            <span class="navbar-text">比对结果</span>
+        </div>
+    </nav>
+
+    <div class="sticky-bar">
+        <div class="container">
+            <div class="stats">
+                <span class="stat-item">
+                    <span style="color:#28a745;font-weight:bold;font-size:18px;" th:text="${diffResult.addedTables.size()}">0</span>
+                    <span>新增</span>
+                </span>
+                <span class="stat-item">
+                    <span style="color:#dc3545;font-weight:bold;font-size:18px;" th:text="${diffResult.deletedTables.size()}">0</span>
+                    <span>删除</span>
+                </span>
+                <span class="stat-item">
+                    <span style="color:#ffc107;font-weight:bold;font-size:18px;" th:text="${diffResult.modifiedTables.size()}">0</span>
+                    <span>修改</span>
+                </span>
+                <div class="nav-links ms-3">
+                    <a th:if="${diffResult.addedTables.size() > 0}" href="#section-add">新增表</a>
+                    <a th:if="${diffResult.deletedTables.size() > 0}" href="#section-delete">删除表</a>
+                    <a th:if="${diffResult.modifiedTables.size() > 0}" href="#section-modify">修改表</a>
+                </div>
+            </div>
+            <div class="actions">
+                <a href="/dashboard" class="btn btn-sm btn-outline-secondary">返回看板</a>
+                <button th:if="${diffResult.hasChanges()}" type="button" class="btn btn-sm btn-primary" onclick="generateSql()">
+                    生成SQL脚本
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="container mt-3">
+        <div th:if="${diffResult.hasChanges()}" class="alert alert-info text-center py-2 mb-3" style="font-size:14px;">
+            共发现 <strong th:text="${diffResult.addedTables.size() + diffResult.deletedTables.size() + diffResult.modifiedTables.size()}">0</strong> 
+            个差异对象 — 快捷导航：上方点击「新增表」「删除表」「修改表」快速跳转
+        </div>
+    </div>
+
+    <div class="container mb-5">
+        <div id="section-add" th:if="${diffResult.addedTables.size() > 0}" class="mb-4">
+            <div class="section-header">
+                <h3 class="text-success">新增表 <span class="badge bg-success" th:text="${diffResult.addedTables.size()}"></span></h3>
+                <button class="btn btn-sm btn-outline-success" onclick="toggleSection('add')">全部展开/收起</button>
+            </div>
+            <div th:each="table, stat : ${diffResult.addedTables}" class="mb-2">
+                <div class="card diff-type-add">
+                    <div class="card-header card-header-toggle" 
+                         data-bs-toggle="collapse" 
+                         th:data-bs-target="'#add-body-' + ${stat.index}"
+                         onclick="toggleArrow(this)">
+                        <h5 class="font-weight-bold mb-0 d-flex justify-content-between align-items-center">
+                            <span th:text="${table.tableName}"></span>
+                            <span class="arrow expanded">▼</span>
+                        </h5>
+                    </div>
+                    <div class="collapse show" th:id="'add-body-' + ${stat.index}">
+                        <div class="card-body">
+                            <div th:if="${table.columnDiffs.size() > 0}" class="mb-3">
+                                <h6 class="text-sm font-weight-bold text-muted">字段:</h6>
+                                <div class="ml-3">
+                                    <div th:each="col : ${table.columnDiffs}" class="mb-2">
+                                        <span class="badge bg-success">ADD</span>
+                                        <span th:text="${col.columnName}"></span>
+                                        <span th:if="${col.targetColumn != null}" class="text-sm text-muted ml-2">
+                                            [[${col.targetColumn.dataType}]]
+                                            (<span th:text="${col.targetColumn.dataLength}"></span>)
+                                            <span th:if="!${col.targetColumn.nullable}">NOT NULL</span>
+                                            <span th:if="${col.targetColumn.defaultValue != null}">DEFAULT [[${col.targetColumn.defaultValue}]]</span>
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div th:if="${table.indexDiffs.size() > 0}">
+                                <h6 class="text-sm font-weight-bold text-muted">索引:</h6>
+                                <div class="ml-3">
+                                    <div th:each="idx : ${table.indexDiffs}" class="mb-2">
+                                        <span class="badge bg-success">ADD</span>
+                                        <span th:text="${idx.indexName}"></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="section-delete" th:if="${diffResult.deletedTables.size() > 0}" class="mb-4">
+            <div class="section-header">
+                <h3 class="text-danger">删除表 <span class="badge bg-danger" th:text="${diffResult.deletedTables.size()}"></span></h3>
+                <button class="btn btn-sm btn-outline-danger" onclick="toggleSection('del')">全部展开/收起</button>
+            </div>
+            <div th:each="table, stat : ${diffResult.deletedTables}" class="mb-2">
+                <div class="card diff-type-delete">
+                    <div class="card-header card-header-toggle"
+                         data-bs-toggle="collapse"
+                         th:data-bs-target="'#del-body-' + ${stat.index}"
+                         onclick="toggleArrow(this)">
+                        <h5 class="font-weight-bold mb-0 d-flex justify-content-between align-items-center">
+                            <span th:text="${table.tableName}"></span>
+                            <span class="arrow expanded">▼</span>
+                        </h5>
+                    </div>
+                    <div class="collapse show" th:id="'del-body-' + ${stat.index}">
+                        <div class="card-body">
+                            <div th:if="${table.columnDiffs.size() > 0}" class="mb-3">
+                                <h6 class="text-sm font-weight-bold text-muted">字段:</h6>
+                                <div class="ml-3">
+                                    <div th:each="col : ${table.columnDiffs}" class="mb-2">
+                                        <span class="badge bg-danger">DELETE</span>
+                                        <span th:text="${col.columnName}"></span>
+                                        <span th:if="${col.sourceColumn != null}" class="text-sm text-muted ml-2">
+                                            [[${col.sourceColumn.dataType}]]
+                                            (<span th:text="${col.sourceColumn.dataLength}"></span>)
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div th:if="${table.indexDiffs.size() > 0}">
+                                <h6 class="text-sm font-weight-bold text-muted">索引:</h6>
+                                <div class="ml-3">
+                                    <div th:each="idx : ${table.indexDiffs}" class="mb-2">
+                                        <span class="badge bg-danger">DELETE</span>
+                                        <span th:text="${idx.indexName}"></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="section-modify" th:if="${diffResult.modifiedTables.size() > 0}" class="mb-4">
+            <div class="section-header">
+                <h3 class="text-warning">修改表 <span class="badge bg-warning" th:text="${diffResult.modifiedTables.size()}"></span></h3>
+                <button class="btn btn-sm btn-outline-warning" onclick="toggleSection('mod')">全部展开/收起</button>
+            </div>
+            <div th:each="table, stat : ${diffResult.modifiedTables}" class="mb-2">
+                <div class="card diff-type-modify">
+                    <div class="card-header card-header-toggle"
+                         data-bs-toggle="collapse"
+                         th:data-bs-target="'#mod-body-' + ${stat.index}"
+                         onclick="toggleArrow(this)">
+                        <h5 class="font-weight-bold mb-0 d-flex justify-content-between align-items-center">
+                            <span th:text="${table.tableName}"></span>
+                            <span class="arrow expanded">▼</span>
+                        </h5>
+                    </div>
+                    <div class="collapse show" th:id="'mod-body-' + ${stat.index}">
+                        <div class="card-body">
+                            <div th:if="${table.columnDiffs.size() > 0}" class="mb-3">
+                                <h6 class="text-sm font-weight-bold text-muted">字段变更:</h6>
+                                <div class="ml-3">
+                                    <div th:each="col : ${table.columnDiffs}" class="mb-2">
+                                        <span class="text-xs font-weight-bold px-2 py-1 rounded" 
+                                              th:class="${col.diffType == 'ADD' ? 'bg-success text-white' : (col.diffType == 'DELETE' ? 'bg-danger text-white' : 'bg-warning text-dark')}">
+                                            [[${col.diffType}]]
+                                        </span>
+                                        <span th:text="${col.columnName}"></span>
+                                        <span th:if="${col.changeDetail}" class="text-sm text-muted ml-2">
+                                            - [[${col.changeDetail}]]
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div th:if="${table.indexDiffs.size() > 0}">
+                                <h6 class="text-sm font-weight-bold text-muted">索引变更:</h6>
+                                <div class="ml-3">
+                                    <div th:each="idx : ${table.indexDiffs}" class="mb-2">
+                                        <span class="text-xs font-weight-bold px-2 py-1 rounded" 
+                                              th:class="${idx.diffType == 'ADD' ? 'bg-success text-white' : (idx.diffType == 'DELETE' ? 'bg-danger text-white' : 'bg-warning text-dark')}">
+                                            [[${idx.diffType}]]
+                                        </span>
+                                        <span th:text="${idx.indexName}"></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div th:if="${!diffResult.hasChanges()}" class="text-center py-10">
+            <div class="text-success text-4xl mb-4">✓</div>
+            <h3 class="text-success">两个数据库结构完全一致</h3>
+        </div>
+    </div>
+
+    <button class="back-to-top" id="backToTop" onclick="scrollToTop()" title="回到顶部">↑</button>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        function generateSql() {
+            window.location.href = '/sql';
+        }
+
+        function scrollToTop() {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        function toggleArrow(header) {
+            const arrow = header.querySelector('.arrow');
+            const collapse = header.nextElementSibling;
+            if (collapse.classList.contains('show')) {
+                arrow.classList.remove('expanded');
+            } else {
+                arrow.classList.add('expanded');
+            }
+        }
+
+        function toggleSection(prefix) {
+            if (prefix === 'add') {
+                const firstCollapse = document.querySelector('[id^="add-body-"]');
+                if (!firstCollapse) return;
+                const allExpanded = firstCollapse.classList.contains('show');
+                document.querySelectorAll('[id^="add-body-"]').forEach(function(el) {
+                    const bsCollapse = bootstrap.Collapse.getOrCreateInstance(el);
+                    if (allExpanded) {
+                        bsCollapse.hide();
+                    } else {
+                        bsCollapse.show();
+                    }
+                });
+                document.querySelectorAll('#section-add .arrow').forEach(function(arrow) {
+                    if (allExpanded) {
+                        arrow.classList.remove('expanded');
+                    } else {
+                        arrow.classList.add('expanded');
+                    }
+                });
+            } else if (prefix === 'del') {
+                const firstCollapse = document.querySelector('[id^="del-body-"]');
+                if (!firstCollapse) return;
+                const allExpanded = firstCollapse.classList.contains('show');
+                document.querySelectorAll('[id^="del-body-"]').forEach(function(el) {
+                    const bsCollapse = bootstrap.Collapse.getOrCreateInstance(el);
+                    if (allExpanded) {
+                        bsCollapse.hide();
+                    } else {
+                        bsCollapse.show();
+                    }
+                });
+                document.querySelectorAll('#section-delete .arrow').forEach(function(arrow) {
+                    if (allExpanded) {
+                        arrow.classList.remove('expanded');
+                    } else {
+                        arrow.classList.add('expanded');
+                    }
+                });
+            } else if (prefix === 'mod') {
+                const firstCollapse = document.querySelector('[id^="mod-body-"]');
+                if (!firstCollapse) return;
+                const allExpanded = firstCollapse.classList.contains('show');
+                document.querySelectorAll('[id^="mod-body-"]').forEach(function(el) {
+                    const bsCollapse = bootstrap.Collapse.getOrCreateInstance(el);
+                    if (allExpanded) {
+                        bsCollapse.hide();
+                    } else {
+                        bsCollapse.show();
+                    }
+                });
+                document.querySelectorAll('#section-modify .arrow').forEach(function(arrow) {
+                    if (allExpanded) {
+                        arrow.classList.remove('expanded');
+                    } else {
+                        arrow.classList.add('expanded');
+                    }
+                });
+            }
+        }
+
+        window.addEventListener('scroll', function() {
+            const btn = document.getElementById('backToTop');
+            if (window.scrollY > 400) {
+                btn.classList.add('visible');
+            } else {
+                btn.classList.remove('visible');
+            }
+        });
+
+        document.querySelectorAll('.nav-links a').forEach(function(link) {
+            link.addEventListener('click', function(e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+            });
+        });
+
+        document.querySelectorAll('.collapse').forEach(function(el) {
+            el.addEventListener('hidden.bs.collapse', function() {
+                const arrow = this.previousElementSibling.querySelector('.arrow');
+                if (arrow) arrow.classList.remove('expanded');
+            });
+            el.addEventListener('shown.bs.collapse', function() {
+                const arrow = this.previousElementSibling.querySelector('.arrow');
+                if (arrow) arrow.classList.add('expanded');
+            });
+        });
+    </script>
+</body>
+</html>

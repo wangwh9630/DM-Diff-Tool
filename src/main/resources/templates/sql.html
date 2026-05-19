@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DM-Diff - SQL脚本生成</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .log-container { max-height: 400px; overflow-y: auto; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; }
+        .log-item { padding: 6px 10px; border-bottom: 1px solid #2d2d2d; display: flex; align-items: flex-start; gap: 8px; }
+        .log-item:last-child { border-bottom: none; }
+        .log-success { background: #1a3a1a; }
+        .log-error { background: #3a1a1a; }
+        .log-info { background: #1a2a3a; }
+        .log-badge { flex-shrink: 0; min-width: 60px; font-size: 11px; padding: 2px 6px; border-radius: 3px; text-align: center; }
+        .badge-add { background: #198754; color: #fff; }
+        .badge-modify { background: #ffc107; color: #000; }
+        .badge-delete { background: #dc3545; color: #fff; }
+        .badge-rollback { background: #6f42c1; color: #fff; }
+        .badge-success { background: #2d8a4e; }
+        .badge-fail { background: #c0392b; }
+        pre code { color: #e0e0e0; }
+        .btn-exec { min-width: 120px; }
+        .card-exec { transition: all 0.2s; }
+        .card-exec:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container">
+            <a class="navbar-brand" href="/">DM-Diff</a>
+            <span class="navbar-text">SQL脚本生成与执行</span>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <ul class="nav nav-tabs mb-4" id="sqlTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="upgrade-tab" data-bs="upgrade-tab" data-bs-toggle="tab" data-bs-target="#upgrade" type="button" role="tab">正向升级 SQL</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="rollback-tab" data-bs-toggle="tab" data-bs-target="#rollback" type="button" role="tab">逆向回滚 SQL</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="exec-tab" data-bs-toggle="tab" data-bs-target="#exec" type="button" role="tab">执行日志</button>
+            </li>
+        </ul>
+
+        <div class="tab-content">
+            <div class="tab-pane fade show active" id="upgrade" role="tabpanel">
+                <div class="row">
+                    <div class="col-12 mb-3">
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-success btn-exec" onclick="executeStep('create', 'upgrade')">执行 新增表</button>
+                            <button class="btn btn-warning btn-exec text-dark" onclick="executeStep('alter', 'upgrade')">执行 修改表</button>
+                            <button class="btn btn-danger btn-exec" onclick="executeStep('drop', 'upgrade')">执行 删除表</button>
+                            <button class="btn btn-primary btn-exec" onclick="executeAll('upgrade')">执行全部</button>
+                            <button class="btn btn-outline-light btn-exec" onclick="copySql('upgrade')">复制SQL</button>
+                        </div>
+                    </div>
+                    <div class="col-12">
+                        <div class="card bg-dark">
+                            <div class="card-body p-0">
+                                <pre class="p-3 mb-0 overflow-auto" style="max-height: 600px; white-space: pre-wrap;"><code id="upgradeSql" th:text="${upgradeSql}" style="color: #e0e0e0;"></code></pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tab-pane fade" id="rollback" role="tabpanel">
+                <div class="row">
+                    <div class="col-12 mb-3">
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-purple btn-exec" style="background: #6f42c1; color: #fff;" onclick="executeAll('rollback')">执行全部回滚</button>
+                            <button class="btn btn-outline-light btn-exec" onclick="copySql('rollback')">复制SQL</button>
+                        </div>
+                    </div>
+                    <div class="col-12">
+                        <div class="card bg-dark">
+                            <div class="card-body p-0">
+                                <pre class="p-3 mb-0 overflow-auto" style="max-height: 600px; white-space: pre-wrap;"><code id="rollbackSql" th:text="${rollbackSql}" style="color: #e0e0e0;"></code></pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tab-pane fade" id="exec" role="tabpanel">
+                <div class="row">
+                    <div class="col-12 mb-3">
+                        <div class="card">
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <span><strong>执行日志</strong> <span id="execSummary" class="text-muted"></span></span>
+                                <button class="btn btn-sm btn-outline-secondary" onclick="clearLog()">清空日志</button>
+                            </div>
+                            <div class="card-body p-0">
+                                <div id="logContainer" class="log-container bg-dark text-light">
+                                    <div class="log-item log-info">
+                                        <span class="text-muted">等待执行...</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-12">
+                        <div class="d-flex gap-2 flex-wrap">
+                            <button class="btn btn-success" onclick="executeStep('create', 'upgrade')">执行 新增表</button>
+                            <button class="btn btn-warning text-dark" onclick="executeStep('alter', 'upgrade')">执行 修改表</button>
+                            <button class="btn btn-danger" onclick="executeStep('drop', 'upgrade')">执行 删除表</button>
+                            <button class="btn btn-primary" onclick="executeAll('upgrade')">执行全部升级</button>
+                            <button class="btn btn-secondary" style="background:#6f42c1;color:#fff;" onclick="executeAll('rollback')">执行全部回滚</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row mt-4">
+            <div class="col-12 text-center">
+                <a href="/diff" class="btn btn-outline-secondary">返回比对结果</a>
+                <a href="/dashboard" class="btn btn-outline-info">重新比对</a>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const actionLabels = {
+            'ADD': { text: '新增', cls: 'badge-add' },
+            'MODIFY': { text: '修改', cls: 'badge-modify' },
+            'DELETE': { text: '删除', cls: 'badge-delete' },
+            'ROLLBACK_CREATE': { text: '回滚新增', cls: 'badge-rollback' },
+            'ROLLBACK_MODIFY': { text: '回滚修改', cls: 'badge-rollback' },
+            'ROLLBACK_DROP': { text: '回滚删除', cls: 'badge-rollback' }
+        };
+
+        function addLog(tableName, actionType, success, errorMsg) {
+            const container = document.getElementById('logContainer');
+            const firstChild = container.firstElementChild;
+            if (firstChild && firstChild.textContent.trim() === '等待执行...') {
+                container.innerHTML = '';
+            }
+
+            const label = actionLabels[actionType] || { text: actionType, cls: 'badge-info' };
+            const badgeCls = success ? 'badge-success' : 'badge-fail';
+
+            const div = document.createElement('div');
+            div.className = 'log-item ' + (success ? 'log-success' : 'log-error');
+            div.innerHTML = `
+                <span class="log-badge ${label.cls}">${label.text}</span>
+                <span class="log-badge ${badgeCls}" style="min-width:45px">${success ? 'OK' : 'FAIL'}</span>
+                <span style="flex-shrink:0;color:#aaa">${tableName}</span>
+                <span style="color:#888;flex:1;word-break:break-all">${errorMsg ? errorMsg : ''}</span>
+            `;
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+
+            updateSummary();
+        }
+
+        function updateSummary() {
+            const container = document.getElementById('logContainer');
+            const items = container.querySelectorAll('.log-item');
+            let success = 0, fail = 0;
+            items.forEach(item => {
+                if (item.classList.contains('log-success')) success++;
+                else if (item.classList.contains('log-error')) fail++;
+            });
+            const summary = document.getElementById('execSummary');
+            const total = success + fail;
+            if (total > 0) {
+                summary.textContent = '共 ' + total + ' 条 | 成功 ' + success + ' 条 | 失败 ' + fail + ' 条';
+                summary.style.color = fail > 0 ? '#dc3545' : '#198754';
+            } else {
+                summary.textContent = '';
+            }
+        }
+
+        function clearLog() {
+            const container = document.getElementById('logContainer');
+            container.innerHTML = '<div class="log-item log-info"><span class="text-muted">等待执行...</span></div>';
+            document.getElementById('execSummary').textContent = '';
+        }
+
+        async function executeStep(step, type) {
+            if (step === 'create' && type === 'upgrade') {
+                await doExecute('/execute-create', 'ADD');
+            } else if (step === 'alter' && type === 'upgrade') {
+                await doExecute('/execute-alter', 'MODIFY');
+            } else if (step === 'drop' && type === 'upgrade') {
+                await doExecute('/execute-drop', 'DELETE');
+            }
+        }
+
+        async function executeAll(type) {
+            const resp = await fetch('/execute-all?sqlType=' + encodeURIComponent(type), { method: 'POST' });
+            const data = await resp.json();
+
+            if (data.statements) {
+                for (const stmt of data.statements) {
+                    addLog(stmt.tableName || '未知', stmt.actionType || type, stmt.success, stmt.errorMessage || '');
+                }
+            }
+
+            if (!data.statements || data.statements.length === 0) {
+                addLog('', type.toUpperCase(), false, '没有可执行的语句');
+            }
+        }
+
+        async function doExecute(url, actionType) {
+            const resp = await fetch(url, { method: 'POST' });
+            const data = await resp.json();
+
+            if (Array.isArray(data) && data.length === 0) {
+                addLog('', actionType, false, '没有需要执行的语句');
+                return;
+            }
+
+            if (Array.isArray(data)) {
+                for (const stmt of data) {
+                    addLog(stmt.tableName || '未知', stmt.actionType || actionType, stmt.success, stmt.errorMessage || '');
+                }
+            }
+
+            const execTab = document.getElementById('exec-tab');
+            const tab = new bootstrap.Tab(execTab);
+            tab.show();
+        }
+
+        async function copySql(type) {
+            const sql = type === 'upgrade' ? document.getElementById('upgradeSql').textContent
+                                            : document.getElementById('rollbackSql').textContent;
+            try {
+                await navigator.clipboard.writeText(sql);
+                alert('已复制到剪贴板!');
+            } catch (err) {
+                alert('复制失败，请手动复制');
+            }
+        }
+    </script>
+</body>
+</html>

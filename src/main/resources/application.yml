@@ -1,0 +1,28 @@
+server:
+  port: 8080
+
+spring:
+  thymeleaf:
+    cache: false
+    prefix: classpath:/templates/
+    suffix: .html
+
+logging:
+  level:
+    com.example.dmdiff: DEBUG
+  file:
+    name: logs/dm-diff-tool.log
+
+dm-diff:
+  source:
+    host: localhost
+    port: 5236
+    database: 
+    username: SYSDBA
+    password: Aa123456
+  target:
+    host: localhost
+    port: 5236
+    database: 
+    username: SYSDBA
+    password: Aa123456

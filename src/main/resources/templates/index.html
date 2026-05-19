@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DM-Diff - 达梦数据库对比工具</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .connection-panel {
+            min-height: 350px;
+        }
+        .status-badge {
+            font-size: 12px;
+            padding: 4px 10px;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container">
+            <a class="navbar-brand" href="#">DM-Diff</a>
+            <span class="navbar-text">达梦数据库对比工具</span>
+        </div>
+    </nav>
+
+    <div class="container mt-5">
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card connection-panel">
+                    <div class="card-header bg-danger text-white">
+                        <h4>源库（旧库）</h4>
+                    </div>
+                    <div class="card-body">
+                        <form id="sourceForm">
+                            <div class="mb-3">
+                                <label class="form-label">主机地址</label>
+                                <input type="text" class="form-control" id="sourceHost" th:value="${sourceConfig.host}" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">端口</label>
+                                <input type="number" class="form-control" id="sourcePort" th:value="${sourceConfig.port}" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">数据库名</label>
+                                <select class="form-select" id="sourceDatabase" required>
+                                    <option value="">请先测试连接</option>
+                                    <option th:if="${sourceConfig.database != null and sourceConfig.database != ''}" th:value="${sourceConfig.database}" th:text="${sourceConfig.database} + ' (配置文件)'" selected></option>
+                                </select>
+                                <input type="text" class="form-control mt-2" id="sourceDatabaseInput" placeholder="或手动输入数据库名" style="display:none;">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">用户名</label>
+                                <input type="text" class="form-control" id="sourceUsername" th:value="${sourceConfig.username}" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">密码</label>
+                                <input type="password" class="form-control" id="sourcePassword" th:value="${sourceConfig.password}" required>
+                            </div>
+                            <button type="button" class="btn btn-danger w-100" onclick="testConnection('source')">
+                                测试连接
+                            </button>
+                        </form>
+                        <div id="sourceStatus" class="mt-3"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-6">
+                <div class="card connection-panel">
+                    <div class="card-header bg-success text-white">
+                        <h4>目标库（新库）</h4>
+                    </div>
+                    <div class="card-body">
+                        <form id="targetForm">
+                            <div class="mb-3">
+                                <label class="form-label">主机地址</label>
+                                <input type="text" class="form-control" id="targetHost" th:value="${targetConfig.host}" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">端口</label>
+                                <input type="number" class="form-control" id="targetPort" th:value="${targetConfig.port}" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">数据库名</label>
+                                <select class="form-select" id="targetDatabase" required>
+                                    <option value="">请先测试连接</option>
+                                    <option th:if="${targetConfig.database != null and targetConfig.database != ''}" th:value="${targetConfig.database}" th:text="${targetConfig.database} + ' (配置文件)'" selected></option>
+                                </select>
+                                <input type="text" class="form-control mt-2" id="targetDatabaseInput" placeholder="或手动输入数据库名" style="display:none;">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">用户名</label>
+                                <input type="text" class="form-control" id="targetUsername" th:value="${targetConfig.username}" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">密码</label>
+                                <input type="password" class="form-control" id="targetPassword" th:value="${targetConfig.password}" required>
+                            </div>
+                            <button type="button" class="btn btn-success w-100" onclick="testConnection('target')">
+                                测试连接
+                            </button>
+                        </form>
+                        <div id="targetStatus" class="mt-3"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row mt-4">
+            <div class="col-12 text-center">
+                <button type="button" class="btn btn-primary btn-lg" onclick="goToDashboard()" disabled id="nextBtn">
+                    进入全量看板
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let sourceConnected = false;
+        let targetConnected = false;
+
+        window.addEventListener('DOMContentLoaded', function() {
+            const sourceHost = document.getElementById('sourceHost').value;
+            const targetHost = document.getElementById('targetHost').value;
+            if (sourceHost && sourceHost.trim()) {
+                testConnection('source');
+            }
+            if (targetHost && targetHost.trim()) {
+                testConnection('target');
+            }
+        });
+
+        async function testConnection(type) {
+            const prefix = type === 'source' ? 'source' : 'target';
+            const url = `/test-${type}`;
+            
+            const data = {
+                host: document.getElementById(`${prefix}Host`).value,
+                port: parseInt(document.getElementById(`${prefix}Port`).value),
+                database: document.getElementById(`${prefix}Database`).value || document.getElementById(`${prefix}Username`).value,
+                username: document.getElementById(`${prefix}Username`).value,
+                password: document.getElementById(`${prefix}Password`).value
+            };
+
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+                
+                const result = await response.json();
+                const statusDiv = document.getElementById(`${prefix}Status`);
+                
+                if (result.success) {
+                    statusDiv.innerHTML = `
+                        <div class="alert alert-success">
+                            <strong>连接成功!</strong><br>
+                            数据库版本: ${result.dbVersion}<br>
+                            大小写敏感: ${result.caseSensitive ? '是' : '否'}
+                        </div>
+                    `;
+                    type === 'source' ? sourceConnected = true : targetConnected = true;
+                    
+                    await loadDatabases(type, data);
+                } else {
+                    statusDiv.innerHTML = `
+                        <div class="alert alert-danger">
+                            <strong>连接失败:</strong> ${result.message}
+                        </div>
+                    `;
+                    type === 'source' ? sourceConnected = false : targetConnected = false;
+                }
+                
+                updateNextButton();
+            } catch (error) {
+                console.error('Error:', error);
+            }
+        }
+
+        async function loadDatabases(type, data) {
+            const prefix = type === 'source' ? 'source' : 'target';
+            const select = document.getElementById(`${prefix}Database`);
+            const input = document.getElementById(`${prefix}DatabaseInput`);
+            const currentValue = select.value;
+            
+            select.innerHTML = '<option value="">加载中...</option>';
+            
+            try {
+                const response = await fetch('/get-databases', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+                
+                const databases = await response.json();
+                
+                select.innerHTML = '';
+                if (databases && databases.length > 0) {
+                    databases.forEach(db => {
+                        const option = document.createElement('option');
+                        option.value = db;
+                        option.textContent = db;
+                        select.appendChild(option);
+                    });
+                    input.style.display = 'none';
+                    select.style.display = 'block';
+                    if (databases.includes(currentValue)) {
+                        select.value = currentValue;
+                    } else {
+                        select.value = databases[0];
+                    }
+                    saveConfig(type);
+                } else {
+                    select.innerHTML = '<option value="">未找到数据库</option>';
+                    input.style.display = 'block';
+                    select.style.display = 'none';
+                }
+            } catch (error) {
+                console.error('加载数据库列表失败:', error);
+                select.innerHTML = '<option value="">加载失败</option>';
+                input.style.display = 'block';
+                select.style.display = 'none';
+            }
+        }
+
+        function updateNextButton() {
+            const nextBtn = document.getElementById('nextBtn');
+            nextBtn.disabled = !(sourceConnected && targetConnected);
+        }
+
+        function saveConfig(type) {
+            const prefix = type === 'source' ? 'source' : 'target';
+            const url = `/test-${type}`;
+            const data = {
+                host: document.getElementById(`${prefix}Host`).value,
+                port: parseInt(document.getElementById(`${prefix}Port`).value),
+                database: document.getElementById(`${prefix}Database`).value,
+                username: document.getElementById(`${prefix}Username`).value,
+                password: document.getElementById(`${prefix}Password`).value
+            };
+            fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+        }
+
+        document.getElementById('sourceDatabase').addEventListener('change', function() {
+            saveConfig('source');
+        });
+        document.getElementById('targetDatabase').addEventListener('change', function() {
+            saveConfig('target');
+        });
+
+        function goToDashboard() {
+            window.location.href = '/dashboard';
+        }
+    </script>
+</body>
+</html>

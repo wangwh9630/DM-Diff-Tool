@@ -1,0 +1,39 @@
+# Java
+*.class
+*.jar
+*.war
+*.nar
+target/
+!.mvn/wrapper/maven-wrapper.jar
+
+# Maven
+log/
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.project
+.classpath
+*.prefs
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Spring Boot
+application-local.yml
+application-dev.yml
+application-prod.yml
+*.log
+
+# 项目构建产物
+dm-diff-tool.jar
+dm-diff-tool.jar.original
+
+# 外部配置（含密码，不应提交）
+# 注意：application.yml 如果包含密码，建议使用模板文件
+# 提交 application.yml.example 作为模板
