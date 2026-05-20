@@ -373,6 +373,36 @@ public class DmDiffController {
         return executeStatements(sqlGeneratorService.generateDrop(currentDiffResult, sourceSchema));
     }
 
+    @PostMapping("/rollback-added")
+    @ResponseBody
+    public List<SqlStatement> rollbackAdded() {
+        if (currentDiffResult == null) {
+            return new ArrayList<>();
+        }
+        String sourceSchema = sourceConfig.getDatabase();
+        return executeStatements(sqlGeneratorService.rollbackAdded(currentDiffResult, sourceSchema));
+    }
+
+    @PostMapping("/rollback-modified")
+    @ResponseBody
+    public List<SqlStatement> rollbackModified() {
+        if (currentDiffResult == null) {
+            return new ArrayList<>();
+        }
+        String sourceSchema = sourceConfig.getDatabase();
+        return executeStatements(sqlGeneratorService.rollbackModified(currentDiffResult, sourceSchema));
+    }
+
+    @PostMapping("/rollback-deleted")
+    @ResponseBody
+    public List<SqlStatement> rollbackDeleted() {
+        if (currentDiffResult == null) {
+            return new ArrayList<>();
+        }
+        String sourceSchema = sourceConfig.getDatabase();
+        return executeStatements(sqlGeneratorService.rollbackDeleted(currentDiffResult, sourceSchema));
+    }
+
     @PostMapping("/execute-all")
     @ResponseBody
     public Map<String, Object> executeAll(@RequestParam String sqlType) {

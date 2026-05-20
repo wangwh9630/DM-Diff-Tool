@@ -118,6 +118,41 @@ public class SqlGeneratorService {
         return statements;
     }
 
+    public List<SqlStatement> rollbackAdded(DiffResult diffResult, String sourceSchema) {
+        List<SqlStatement> statements = new ArrayList<>();
+        for (TableDiff tableDiff : diffResult.getAddedTables()) {
+            String sql = generateDropTableSql(tableDiff, sourceSchema);
+            statements.add(new SqlStatement(tableDiff.getTableName(), sql, "ROLLBACK_DROP"));
+        }
+        return statements;
+    }
+
+    public List<SqlStatement> rollbackModified(DiffResult diffResult, String sourceSchema) {
+        List<SqlStatement> statements = new ArrayList<>();
+        for (TableDiff tableDiff : diffResult.getModifiedTables()) {
+            statements.addAll(generateRollbackAlterStatements(tableDiff, sourceSchema));
+        }
+        return statements;
+    }
+
+    public List<SqlStatement> rollbackDeleted(DiffResult diffResult, String sourceSchema) {
+        List<SqlStatement> statements = new ArrayList<>();
+        for (TableDiff tableDiff : diffResult.getDeletedTables()) {
+            String sql = generateCreateTableOnlySql(tableDiff, sourceSchema);
+            statements.add(new SqlStatement(tableDiff.getTableName(), sql, "ROLLBACK_CREATE"));
+            if (tableDiff.getIndexDiffs() != null) {
+                for (IndexDiff idxDiff : tableDiff.getIndexDiffs()) {
+                    IndexInfo index = idxDiff.getSourceIndex();
+                    if (index != null) {
+                        String idxSql = generateCreateIndexSql(getQualifiedName(tableDiff, sourceSchema), index);
+                        statements.add(new SqlStatement(tableDiff.getTableName(), idxSql, "ROLLBACK_CREATE"));
+                    }
+                }
+            }
+        }
+        return statements;
+    }
+
     // ==================== 拆分 ALTER 为逐条语句 ====================
 
     private List<SqlStatement> generateAlterStatements(TableDiff tableDiff, String sourceSchema) {

@@ -126,7 +126,9 @@
                 <div class="row">
                     <div class="col-12 mb-3">
                         <div class="d-flex gap-2 align-items-center flex-wrap">
-                            <button class="btn btn-purple btn-exec" style="background: #6f42c1; color: #fff;" onclick="executeAll('rollback')">执行全部回滚</button>
+                            <button class="btn btn-exec" style="background:#6f42c1;color:#fff" onclick="executeStep('rollback-added', 'rollback')">回滚 新增表</button>
+                            <button class="btn btn-exec" style="background:#e83e8c;color:#fff" onclick="executeStep('rollback-modified', 'rollback')">回滚 修改表</button>
+                            <button class="btn btn-exec" style="background:#fd7e14;color:#fff" onclick="executeStep('rollback-deleted', 'rollback')">回滚 删除表</button>
                             <button class="btn btn-outline-secondary btn-exec" onclick="copySql('rollback')">复制SQL</button>
                             <div class="form-check form-check-inline mb-0 ms-2">
                                 <input class="form-check-input" type="checkbox" id="continueOnErrorRollback" checked>
@@ -167,7 +169,9 @@
                             <button class="btn btn-warning text-dark" onclick="executeStep('alter', 'upgrade')">执行 修改表</button>
                             <button class="btn btn-danger" onclick="executeStep('drop', 'upgrade')">执行 删除表</button>
                             <button class="btn btn-primary" onclick="executeAll('upgrade')">执行全部升级</button>
-                            <button class="btn btn-secondary" style="background:#6f42c1;color:#fff;" onclick="executeAll('rollback')">执行全部回滚</button>
+                            <button class="btn btn-secondary" style="background:#6f42c1;color:#fff" onclick="executeStep('rollback-added', 'rollback')">回滚 新增表</button>
+                            <button class="btn btn-secondary" style="background:#e83e8c;color:#fff" onclick="executeStep('rollback-modified', 'rollback')">回滚 修改表</button>
+                            <button class="btn btn-secondary" style="background:#fd7e14;color:#fff" onclick="executeStep('rollback-deleted', 'rollback')">回滚 删除表</button>
                         </div>
                     </div>
                 </div>
@@ -281,6 +285,12 @@
                 await doExecute('/execute-alter', 'MODIFY');
             } else if (step === 'drop' && type === 'upgrade') {
                 await doExecute('/execute-drop', 'DELETE');
+            } else if (step === 'rollback-added' && type === 'rollback') {
+                await doExecute('/rollback-added', 'ROLLBACK_DROP');
+            } else if (step === 'rollback-modified' && type === 'rollback') {
+                await doExecute('/rollback-modified', 'ROLLBACK_MODIFY');
+            } else if (step === 'rollback-deleted' && type === 'rollback') {
+                await doExecute('/rollback-deleted', 'ROLLBACK_CREATE');
             }
         }
 
@@ -317,7 +327,7 @@
                 if (data.done) {
                     eventSource.close();
                     modal.hide();
-                    location.reload();
+                    showToast(data.errorMessage || '执行完成', data.errorMessage ? 'danger' : 'success');
                     return;
                 }
                 document.getElementById('progressText').textContent = data.current || '正在执行...';
