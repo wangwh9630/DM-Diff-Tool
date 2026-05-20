@@ -17,37 +17,37 @@ public class SqlGeneratorService {
 
     // ==================== 文本展示用方法（保留原有，方便界面展示） ====================
 
-    public String generateUpgradeSql(DiffResult diffResult) {
+    public String generateUpgradeSql(DiffResult diffResult, String sourceSchema) {
         StringBuilder sql = new StringBuilder();
         
         for (TableDiff tableDiff : diffResult.getAddedTables()) {
-            sql.append(generateCreateTableSql(tableDiff)).append("\n\n");
+            sql.append(generateCreateTableSql(tableDiff, sourceSchema)).append("\n\n");
         }
         
         for (TableDiff tableDiff : diffResult.getModifiedTables()) {
-            sql.append(generateAlterTableSql(tableDiff)).append("\n\n");
+            sql.append(generateAlterTableSql(tableDiff, sourceSchema)).append("\n\n");
         }
         
         for (TableDiff tableDiff : diffResult.getDeletedTables()) {
-            sql.append(generateDropTableSql(tableDiff)).append("\n\n");
+            sql.append(generateDropTableSql(tableDiff, sourceSchema)).append("\n\n");
         }
         
         return sql.toString();
     }
 
-    public String generateRollbackSql(DiffResult diffResult) {
+    public String generateRollbackSql(DiffResult diffResult, String sourceSchema) {
         StringBuilder sql = new StringBuilder();
         
         for (TableDiff tableDiff : diffResult.getDeletedTables()) {
-            sql.append(generateCreateTableSql(tableDiff)).append("\n\n");
+            sql.append(generateCreateTableSql(tableDiff, sourceSchema)).append("\n\n");
         }
         
         for (TableDiff tableDiff : diffResult.getModifiedTables()) {
-            sql.append(generateRollbackAlterTableSql(tableDiff)).append("\n\n");
+            sql.append(generateRollbackAlterTableSql(tableDiff, sourceSchema)).append("\n\n");
         }
         
         for (TableDiff tableDiff : diffResult.getAddedTables()) {
-            sql.append(generateDropTableSql(tableDiff)).append("\n\n");
+            sql.append(generateDropTableSql(tableDiff, sourceSchema)).append("\n\n");
         }
         
         return sql.toString();
@@ -55,10 +55,10 @@ public class SqlGeneratorService {
 
     // ==================== 逐条执行用方法（核心修复） ====================
 
-    public List<SqlStatement> generateCreate(DiffResult diffResult) {
+    public List<SqlStatement> generateCreate(DiffResult diffResult, String sourceSchema) {
         List<SqlStatement> statements = new ArrayList<>();
         for (TableDiff tableDiff : diffResult.getAddedTables()) {
-            String tableOnlySql = generateCreateTableOnlySql(tableDiff);
+            String tableOnlySql = generateCreateTableOnlySql(tableDiff, sourceSchema);
             statements.add(new SqlStatement(tableDiff.getTableName(), tableOnlySql, "ADD"));
             if (tableDiff.getIndexDiffs() != null) {
                 for (IndexDiff idxDiff : tableDiff.getIndexDiffs()) {
@@ -67,7 +67,7 @@ public class SqlGeneratorService {
                         index = idxDiff.getSourceIndex();
                     }
                     if (index != null) {
-                        String idxSql = generateCreateIndexSql(getQualifiedName(tableDiff), index);
+                        String idxSql = generateCreateIndexSql(getQualifiedName(tableDiff, sourceSchema), index);
                         statements.add(new SqlStatement(tableDiff.getTableName(), idxSql, "ADD"));
                     }
                 }
@@ -76,43 +76,43 @@ public class SqlGeneratorService {
         return statements;
     }
 
-    public List<SqlStatement> generateAlter(DiffResult diffResult) {
+    public List<SqlStatement> generateAlter(DiffResult diffResult, String sourceSchema) {
         List<SqlStatement> statements = new ArrayList<>();
         for (TableDiff tableDiff : diffResult.getModifiedTables()) {
-            statements.addAll(generateAlterStatements(tableDiff));
+            statements.addAll(generateAlterStatements(tableDiff, sourceSchema));
         }
         return statements;
     }
 
-    public List<SqlStatement> generateDrop(DiffResult diffResult) {
+    public List<SqlStatement> generateDrop(DiffResult diffResult, String sourceSchema) {
         List<SqlStatement> statements = new ArrayList<>();
         for (TableDiff tableDiff : diffResult.getDeletedTables()) {
-            String sql = generateDropTableSql(tableDiff);
+            String sql = generateDropTableSql(tableDiff, sourceSchema);
             statements.add(new SqlStatement(tableDiff.getTableName(), sql, "DELETE"));
         }
         return statements;
     }
 
-    public List<SqlStatement> rollbackAll(DiffResult diffResult) {
+    public List<SqlStatement> rollbackAll(DiffResult diffResult, String sourceSchema) {
         List<SqlStatement> statements = new ArrayList<>();
         for (TableDiff tableDiff : diffResult.getDeletedTables()) {
-            String sql = generateCreateTableOnlySql(tableDiff);
+            String sql = generateCreateTableOnlySql(tableDiff, sourceSchema);
             statements.add(new SqlStatement(tableDiff.getTableName(), sql, "ROLLBACK_CREATE"));
             if (tableDiff.getIndexDiffs() != null) {
                 for (IndexDiff idxDiff : tableDiff.getIndexDiffs()) {
                     IndexInfo index = idxDiff.getSourceIndex();
                     if (index != null) {
-                        String idxSql = generateCreateIndexSql(getQualifiedName(tableDiff), index);
+                        String idxSql = generateCreateIndexSql(getQualifiedName(tableDiff, sourceSchema), index);
                         statements.add(new SqlStatement(tableDiff.getTableName(), idxSql, "ROLLBACK_CREATE"));
                     }
                 }
             }
         }
         for (TableDiff tableDiff : diffResult.getModifiedTables()) {
-            statements.addAll(generateRollbackAlterStatements(tableDiff));
+            statements.addAll(generateRollbackAlterStatements(tableDiff, sourceSchema));
         }
         for (TableDiff tableDiff : diffResult.getAddedTables()) {
-            String sql = generateDropTableSql(tableDiff);
+            String sql = generateDropTableSql(tableDiff, sourceSchema);
             statements.add(new SqlStatement(tableDiff.getTableName(), sql, "ROLLBACK_DROP"));
         }
         return statements;
@@ -120,9 +120,9 @@ public class SqlGeneratorService {
 
     // ==================== 拆分 ALTER 为逐条语句 ====================
 
-    private List<SqlStatement> generateAlterStatements(TableDiff tableDiff) {
+    private List<SqlStatement> generateAlterStatements(TableDiff tableDiff, String sourceSchema) {
         List<SqlStatement> statements = new ArrayList<>();
-        String qualifiedName = getQualifiedName(tableDiff);
+        String qualifiedName = getQualifiedName(tableDiff, sourceSchema);
 
         for (IndexDiff idxDiff : tableDiff.getIndexDiffs()) {
             if (idxDiff.getDiffType() == DiffType.DELETE) {
@@ -155,9 +155,9 @@ public class SqlGeneratorService {
         return statements;
     }
 
-    private List<SqlStatement> generateRollbackAlterStatements(TableDiff tableDiff) {
+    private List<SqlStatement> generateRollbackAlterStatements(TableDiff tableDiff, String sourceSchema) {
         List<SqlStatement> statements = new ArrayList<>();
-        String qualifiedName = getQualifiedName(tableDiff);
+        String qualifiedName = getQualifiedName(tableDiff, sourceSchema);
 
         for (IndexDiff idxDiff : tableDiff.getIndexDiffs()) {
             if (idxDiff.getDiffType() == DiffType.ADD) {
@@ -192,7 +192,10 @@ public class SqlGeneratorService {
 
     // ==================== SQL 语句生成 ====================
 
-    private String getQualifiedName(TableDiff tableDiff) {
+    private String getQualifiedName(TableDiff tableDiff, String sourceSchema) {
+        if (sourceSchema != null && !sourceSchema.isEmpty()) {
+            return sourceSchema + "." + tableDiff.getTableName();
+        }
         if (tableDiff.getSchemaName() != null && !tableDiff.getSchemaName().isEmpty()) {
             return tableDiff.getSchemaName() + "." + tableDiff.getTableName();
         }
@@ -206,9 +209,9 @@ public class SqlGeneratorService {
         return "";
     }
 
-    private String generateCreateTableSql(TableDiff tableDiff) {
+    private String generateCreateTableSql(TableDiff tableDiff, String sourceSchema) {
         StringBuilder sql = new StringBuilder();
-        String tableName = getQualifiedName(tableDiff);
+        String tableName = getQualifiedName(tableDiff, sourceSchema);
         sql.append("-- 创建表 ").append(tableDiff.getTableName()).append("\n");
         sql.append("CREATE TABLE ").append(tableName).append(" (\n");
 
@@ -255,9 +258,9 @@ public class SqlGeneratorService {
         return sql.toString();
     }
 
-    private String generateCreateTableOnlySql(TableDiff tableDiff) {
+    private String generateCreateTableOnlySql(TableDiff tableDiff, String sourceSchema) {
         StringBuilder sql = new StringBuilder();
-        String tableName = getQualifiedName(tableDiff);
+        String tableName = getQualifiedName(tableDiff, sourceSchema);
         sql.append("-- 创建表 ").append(tableDiff.getTableName()).append("\n");
         sql.append("CREATE TABLE ").append(tableName).append(" (\n");
 
@@ -302,14 +305,14 @@ public class SqlGeneratorService {
         return dataType;
     }
 
-    private String generateDropTableSql(TableDiff tableDiff) {
-        String qualifiedName = getQualifiedName(tableDiff);
+    private String generateDropTableSql(TableDiff tableDiff, String sourceSchema) {
+        String qualifiedName = getQualifiedName(tableDiff, sourceSchema);
         return String.format("-- 删除表 %s\nDROP TABLE %s;", tableDiff.getTableName(), qualifiedName);
     }
 
-    private String generateAlterTableSql(TableDiff tableDiff) {
+    private String generateAlterTableSql(TableDiff tableDiff, String sourceSchema) {
         StringBuilder sql = new StringBuilder();
-        String qualifiedName = getQualifiedName(tableDiff);
+        String qualifiedName = getQualifiedName(tableDiff, sourceSchema);
         
         List<String> dropIndexes = new ArrayList<>();
         List<String> dropConstraints = new ArrayList<>();
@@ -351,9 +354,9 @@ public class SqlGeneratorService {
         return sql.toString().trim();
     }
 
-    private String generateRollbackAlterTableSql(TableDiff tableDiff) {
+    private String generateRollbackAlterTableSql(TableDiff tableDiff, String sourceSchema) {
         StringBuilder sql = new StringBuilder();
-        String qualifiedName = getQualifiedName(tableDiff);
+        String qualifiedName = getQualifiedName(tableDiff, sourceSchema);
         
         List<String> dropIndexes = new ArrayList<>();
         List<String> dropColumns = new ArrayList<>();

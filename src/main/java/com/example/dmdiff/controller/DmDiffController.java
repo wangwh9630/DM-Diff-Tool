@@ -195,8 +195,9 @@ public class DmDiffController {
             return "error";
         }
 
-        String upgradeSql = sqlGeneratorService.generateUpgradeSql(currentDiffResult);
-        String rollbackSql = sqlGeneratorService.generateRollbackSql(currentDiffResult);
+        String sourceSchema = sourceConfig.getDatabase();
+        String upgradeSql = sqlGeneratorService.generateUpgradeSql(currentDiffResult, sourceSchema);
+        String rollbackSql = sqlGeneratorService.generateRollbackSql(currentDiffResult, sourceSchema);
 
         model.addAttribute("upgradeSql", upgradeSql);
         model.addAttribute("rollbackSql", rollbackSql);
@@ -345,22 +346,31 @@ public class DmDiffController {
     @PostMapping("/execute-create")
     @ResponseBody
     public List<SqlStatement> executeCreate() {
-        if (currentDiffResult == null) return List.of();
-        return executeStatements(sqlGeneratorService.generateCreate(currentDiffResult));
+        if (currentDiffResult == null) {
+            return new ArrayList<>();
+        }
+        String sourceSchema = sourceConfig.getDatabase();
+        return executeStatements(sqlGeneratorService.generateCreate(currentDiffResult, sourceSchema));
     }
 
     @PostMapping("/execute-alter")
     @ResponseBody
     public List<SqlStatement> executeAlter() {
-        if (currentDiffResult == null) return List.of();
-        return executeStatements(sqlGeneratorService.generateAlter(currentDiffResult));
+        if (currentDiffResult == null) {
+            return new ArrayList<>();
+        }
+        String sourceSchema = sourceConfig.getDatabase();
+        return executeStatements(sqlGeneratorService.generateAlter(currentDiffResult, sourceSchema));
     }
 
     @PostMapping("/execute-drop")
     @ResponseBody
     public List<SqlStatement> executeDrop() {
-        if (currentDiffResult == null) return List.of();
-        return executeStatements(sqlGeneratorService.generateDrop(currentDiffResult));
+        if (currentDiffResult == null) {
+            return new ArrayList<>();
+        }
+        String sourceSchema = sourceConfig.getDatabase();
+        return executeStatements(sqlGeneratorService.generateDrop(currentDiffResult, sourceSchema));
     }
 
     @PostMapping("/execute-all")
@@ -369,35 +379,27 @@ public class DmDiffController {
         Map<String, Object> result = new HashMap<>();
         if (currentDiffResult == null) {
             result.put("success", false);
-            result.put("message", "请先执行数据库比对");
+            result.put("message", "请先执行比对");
             return result;
         }
-
-        List<SqlStatement> allStatements;
+        
+        List<SqlStatement> allStatements = new ArrayList<>();
+        String sourceSchema = sourceConfig.getDatabase();
+        
         if ("upgrade".equalsIgnoreCase(sqlType)) {
-            allStatements = sqlGeneratorService.generateCreate(currentDiffResult);
-            allStatements.addAll(sqlGeneratorService.generateAlter(currentDiffResult));
-            allStatements.addAll(sqlGeneratorService.generateDrop(currentDiffResult));
+            allStatements = sqlGeneratorService.generateCreate(currentDiffResult, sourceSchema);
+            allStatements.addAll(sqlGeneratorService.generateAlter(currentDiffResult, sourceSchema));
+            allStatements.addAll(sqlGeneratorService.generateDrop(currentDiffResult, sourceSchema));
         } else if ("rollback".equalsIgnoreCase(sqlType)) {
-            allStatements = sqlGeneratorService.rollbackAll(currentDiffResult);
-        } else {
-            result.put("success", false);
-            result.put("message", "未知的 SQL 类型");
-            return result;
+            allStatements = sqlGeneratorService.rollbackAll(currentDiffResult, sourceSchema);
         }
 
         executeStatements(allStatements);
-
-        int successCount = 0;
-        int failCount = 0;
-        for (SqlStatement stmt : allStatements) {
-            if (stmt.isSuccess()) successCount++;
-            else failCount++;
-        }
-
-        result.put("success", failCount == 0);
-        result.put("message", "成功 " + successCount + " 条，失败 " + failCount + " 条");
+        
+        result.put("success", true);
         result.put("statements", allStatements);
+        result.put("snapshotId", lastSnapshotId);
+        
         return result;
     }
 
@@ -420,15 +422,16 @@ public class DmDiffController {
             return emitter;
         }
 
+        String sourceSchema = sourceConfig.getDatabase();
         lastSnapshotId = createSnapshot();
 
         List<SqlStatement> allStatements;
         if ("upgrade".equalsIgnoreCase(sqlType)) {
-            allStatements = sqlGeneratorService.generateCreate(currentDiffResult);
-            allStatements.addAll(sqlGeneratorService.generateAlter(currentDiffResult));
-            allStatements.addAll(sqlGeneratorService.generateDrop(currentDiffResult));
+            allStatements = sqlGeneratorService.generateCreate(currentDiffResult, sourceSchema);
+            allStatements.addAll(sqlGeneratorService.generateAlter(currentDiffResult, sourceSchema));
+            allStatements.addAll(sqlGeneratorService.generateDrop(currentDiffResult, sourceSchema));
         } else if ("rollback".equalsIgnoreCase(sqlType)) {
-            allStatements = sqlGeneratorService.rollbackAll(currentDiffResult);
+            allStatements = sqlGeneratorService.rollbackAll(currentDiffResult, sourceSchema);
         } else {
             try {
                 ProgressEvent event = new ProgressEvent();
@@ -539,7 +542,8 @@ public class DmDiffController {
         }
 
         String snapshotId = UUID.randomUUID().toString();
-        List<SqlStatement> rollbackStatements = sqlGeneratorService.rollbackAll(currentDiffResult);
+        String sourceSchema = sourceConfig.getDatabase();
+        List<SqlStatement> rollbackStatements = sqlGeneratorService.rollbackAll(currentDiffResult, sourceSchema);
         snapshots.put(snapshotId, rollbackStatements);
         logger.info("创建快照: {} ({} 条回滚语句)", snapshotId, rollbackStatements.size());
         return snapshotId;
