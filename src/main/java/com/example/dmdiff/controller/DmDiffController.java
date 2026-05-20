@@ -5,13 +5,20 @@ import com.example.dmdiff.diff.DiffResult;
 import com.example.dmdiff.dto.ConnectionConfig;
 import com.example.dmdiff.dto.ConnectionResult;
 import com.example.dmdiff.dto.DiffConfig;
+import com.example.dmdiff.dto.MigrationProgress;
+import com.example.dmdiff.dto.MigrationRequest;
 import com.example.dmdiff.dto.SqlStatement;
+import com.example.dmdiff.metadata.ColumnInfo;
+import com.example.dmdiff.metadata.IndexInfo;
+import com.example.dmdiff.metadata.TableInfo;
 import com.example.dmdiff.service.DatabaseService;
 import com.example.dmdiff.service.DiffService;
+import com.example.dmdiff.service.MigrationService;
 import com.example.dmdiff.service.SqlGeneratorService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
+import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,11 +31,16 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.PrintWriter;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -54,6 +66,9 @@ public class DmDiffController {
 
     @Autowired
     private SqlGeneratorService sqlGeneratorService;
+
+    @Autowired
+    private MigrationService migrationService;
 
     @Autowired
     private DmDiffConfig dmDiffConfig;
@@ -668,5 +683,443 @@ public class DmDiffController {
         }
 
         return ddl != null ? ddl : "-- 无法获取DDL";
+    }
+
+    // ==================== 数据迁移 (#14) ====================
+
+    @GetMapping("/migration")
+    public String migration(Model model) {
+        model.addAttribute("sourceConfig", sourceConfig);
+        model.addAttribute("targetConfig", targetConfig);
+        return "migration";
+    }
+
+    @GetMapping("/migration/tables")
+    @ResponseBody
+    public Map<String, Object> getMigrationTables() {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            List<String> sourceTables = databaseService.getAllTableNames(sourceConfig);
+            List<String> targetTables = databaseService.getAllTableNames(targetConfig);
+
+            List<Map<String, Object>> tableList = new ArrayList<>();
+            for (String tableName : sourceTables) {
+                Map<String, Object> tableInfo = new HashMap<>();
+                tableInfo.put("tableName", tableName);
+                tableInfo.put("existsInTarget", targetTables.contains(tableName));
+                try {
+                    long rowCount = databaseService.getTableRowCount(sourceConfig, sourceConfig.getDatabase(), tableName);
+                    tableInfo.put("rowCount", rowCount);
+                } catch (SQLException e) {
+                    tableInfo.put("rowCount", 0);
+                }
+                tableList.add(tableInfo);
+            }
+
+            result.put("success", true);
+            result.put("tables", tableList);
+        } catch (SQLException e) {
+            logger.error("获取迁移表列表失败: {}", e.getMessage());
+            result.put("success", false);
+            result.put("message", e.getMessage());
+        }
+        return result;
+    }
+
+    @GetMapping(value = "/migration/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter migrateStream(@RequestParam(defaultValue = "") String tables,
+                                     @RequestParam(defaultValue = "true") boolean structure,
+                                     @RequestParam(defaultValue = "true") boolean data,
+                                     @RequestParam(defaultValue = "1000") int batchSize) {
+        SseEmitter emitter = new SseEmitter(600000L);
+
+        List<String> tableNames = new ArrayList<>();
+        if (tables != null && !tables.trim().isEmpty()) {
+            for (String t : tables.split(",")) {
+                String trimmed = t.trim();
+                if (!trimmed.isEmpty()) {
+                    tableNames.add(trimmed);
+                }
+            }
+        } else {
+            try {
+                tableNames.addAll(databaseService.getAllTableNames(sourceConfig));
+            } catch (SQLException e) {
+                try {
+                    MigrationProgress err = new MigrationProgress();
+                    err.setDone(true);
+                    err.setMessage("获取表列表失败: " + e.getMessage());
+                    emitter.send(err);
+                    emitter.complete();
+                } catch (IOException ex) {
+                    logger.error("SSE发送失败", ex);
+                }
+                return emitter;
+            }
+        }
+
+        List<String> finalTableNames = tableNames;
+        taskExecutor.execute(() -> {
+            try {
+                migrationService.migrateTables(sourceConfig, targetConfig, finalTableNames,
+                        structure, data, batchSize, progress -> {
+                            try {
+                                emitter.send(progress);
+                            } catch (IOException e) {
+                                logger.error("SSE发送迁移进度失败", e);
+                            }
+                        });
+            } catch (Exception e) {
+                logger.error("迁移执行失败", e);
+                try {
+                    MigrationProgress err = new MigrationProgress();
+                    err.setDone(true);
+                    err.setMessage("迁移执行失败: " + e.getMessage());
+                    emitter.send(err);
+                } catch (IOException ex) {
+                    logger.error("SSE发送错误事件失败", ex);
+                }
+            } finally {
+                emitter.complete();
+            }
+        });
+
+        return emitter;
+    }
+
+    // ==================== 触发器比较 (#15) ====================
+
+    @GetMapping("/trigger-diff")
+    @ResponseBody
+    public Map<String, Object> getTriggerDiff() {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            String sourceSchema = sourceConfig.getDatabase();
+            String targetSchema = targetConfig.getDatabase();
+
+            List<Map<String, String>> sourceTriggers = databaseService.getTriggers(sourceConfig, sourceSchema);
+            List<Map<String, String>> targetTriggers = databaseService.getTriggers(targetConfig, targetSchema);
+
+            Map<String, Map<String, String>> sourceTriggerMap = new HashMap<>();
+            Map<String, Map<String, String>> targetTriggerMap = new HashMap<>();
+
+            for (Map<String, String> t : sourceTriggers) {
+                sourceTriggerMap.put(t.get("triggerName"), t);
+            }
+            for (Map<String, String> t : targetTriggers) {
+                targetTriggerMap.put(t.get("triggerName"), t);
+            }
+
+            List<Map<String, Object>> added = new ArrayList<>();
+            List<Map<String, Object>> deleted = new ArrayList<>();
+            List<Map<String, Object>> modified = new ArrayList<>();
+
+            for (Map.Entry<String, Map<String, String>> entry : sourceTriggerMap.entrySet()) {
+                String name = entry.getKey();
+                if (!targetTriggerMap.containsKey(name)) {
+                    Map<String, Object> diff = new HashMap<>();
+                    diff.put("triggerName", name);
+                    diff.put("sourceTrigger", entry.getValue());
+                    added.add(diff);
+                }
+            }
+
+            for (Map.Entry<String, Map<String, String>> entry : targetTriggerMap.entrySet()) {
+                String name = entry.getKey();
+                if (!sourceTriggerMap.containsKey(name)) {
+                    Map<String, Object> diff = new HashMap<>();
+                    diff.put("triggerName", name);
+                    diff.put("targetTrigger", entry.getValue());
+                    deleted.add(diff);
+                } else {
+                    Map<String, String> source = sourceTriggerMap.get(name);
+                    Map<String, String> target = entry.getValue();
+                    List<String> changes = new ArrayList<>();
+
+                    if (!java.util.Objects.equals(source.get("tableName"), target.get("tableName")))
+                        changes.add("关联表: " + source.get("tableName") + " -> " + target.get("tableName"));
+                    if (!java.util.Objects.equals(source.get("triggerType"), target.get("triggerType")))
+                        changes.add("类型: " + source.get("triggerType") + " -> " + target.get("triggerType"));
+                    if (!java.util.Objects.equals(source.get("triggeringEvent"), target.get("triggeringEvent")))
+                        changes.add("事件: " + source.get("triggeringEvent") + " -> " + target.get("triggeringEvent"));
+                    if (!java.util.Objects.equals(source.get("status"), target.get("status")))
+                        changes.add("状态: " + source.get("status") + " -> " + target.get("status"));
+                    if (!java.util.Objects.equals(source.get("triggerBody"), target.get("triggerBody")))
+                        changes.add("触发体内容不同");
+
+                    if (!changes.isEmpty()) {
+                        Map<String, Object> diff = new HashMap<>();
+                        diff.put("triggerName", name);
+                        diff.put("sourceTrigger", source);
+                        diff.put("targetTrigger", target);
+                        diff.put("changes", changes);
+                        modified.add(diff);
+                    }
+                }
+            }
+
+            result.put("success", true);
+            result.put("added", added);
+            result.put("deleted", deleted);
+            result.put("modified", modified);
+            result.put("sourceCount", sourceTriggers.size());
+            result.put("targetCount", targetTriggers.size());
+        } catch (SQLException e) {
+            logger.error("触发器对比失败: {}", e.getMessage());
+            result.put("success", false);
+            result.put("message", e.getMessage());
+        }
+        return result;
+    }
+
+    @GetMapping("/trigger-ddl")
+    @ResponseBody
+    public Map<String, Object> getTriggerDdl(@RequestParam String triggerName) {
+        Map<String, Object> result = new HashMap<>();
+        String sourceSchema = sourceConfig.getDatabase();
+        String targetSchema = targetConfig.getDatabase();
+        String sourceDdl = databaseService.getTriggerDdl(sourceConfig, sourceSchema, triggerName);
+        String targetDdl = databaseService.getTriggerDdl(targetConfig, targetSchema, triggerName);
+        result.put("sourceDdl", sourceDdl != null ? sourceDdl : "-- 源库无此触发器");
+        result.put("targetDdl", targetDdl != null ? targetDdl : "-- 目标库无此触发器");
+        return result;
+    }
+
+    // ==================== 数据对比 (#16) ====================
+
+    @GetMapping("/data-compare")
+    @ResponseBody
+    public Map<String, Object> getDataCompare(@RequestParam(defaultValue = "") String tables) {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            String sourceSchema = sourceConfig.getDatabase();
+            String targetSchema = targetConfig.getDatabase();
+
+            List<Map<String, Object>> comparisonList = new ArrayList<>();
+            List<String> tableNames = new ArrayList<>();
+
+            if (tables != null && !tables.trim().isEmpty()) {
+                for (String t : tables.split(",")) {
+                    String trimmed = t.trim();
+                    if (!trimmed.isEmpty()) tableNames.add(trimmed);
+                }
+            } else {
+                List<String> sourceTableNames = databaseService.getAllTableNames(sourceConfig);
+                List<String> targetTableNames = databaseService.getAllTableNames(targetConfig);
+                for (String tn : sourceTableNames) {
+                    if (targetTableNames.contains(tn)) {
+                        tableNames.add(tn);
+                    }
+                }
+            }
+
+            for (String tableName : tableNames) {
+                Map<String, Object> comparison = new HashMap<>();
+                comparison.put("tableName", tableName);
+
+                long sourceCount = databaseService.getTableRowCount(sourceConfig, sourceSchema, tableName);
+                long targetCount = 0;
+                try {
+                    targetCount = databaseService.getTableRowCount(targetConfig, targetSchema, tableName);
+                } catch (SQLException e) {
+                    comparison.put("error", "目标表不存在或无法访问");
+                }
+
+                comparison.put("sourceCount", sourceCount);
+                comparison.put("targetCount", targetCount);
+                comparison.put("matched", sourceCount == targetCount);
+                comparison.put("diffCount", Math.abs(sourceCount - targetCount));
+
+                comparisonList.add(comparison);
+            }
+
+            result.put("success", true);
+            result.put("comparisons", comparisonList);
+        } catch (SQLException e) {
+            logger.error("数据对比失败: {}", e.getMessage());
+            result.put("success", false);
+            result.put("message", e.getMessage());
+        }
+        return result;
+    }
+
+    @GetMapping("/data-compare/detail")
+    @ResponseBody
+    public Map<String, Object> getDataCompareDetail(@RequestParam String tableName,
+                                                      @RequestParam(defaultValue = "100") int limit) {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            String sourceSchema = sourceConfig.getDatabase();
+            String targetSchema = targetConfig.getDatabase();
+
+            long sourceCount = databaseService.getTableRowCount(sourceConfig, sourceSchema, tableName);
+            long targetCount = databaseService.getTableRowCount(targetConfig, targetSchema, tableName);
+
+            result.put("tableName", tableName);
+            result.put("sourceCount", sourceCount);
+            result.put("targetCount", targetCount);
+
+            List<Map<String, Object>> sourceSample = databaseService.getTableData(
+                    sourceConfig, sourceSchema, tableName, Math.min(limit, (int) sourceCount), 0);
+            List<Map<String, Object>> targetSample = databaseService.getTableData(
+                    targetConfig, targetSchema, tableName, Math.min(limit, (int) targetCount), 0);
+
+            result.put("sourceSample", sourceSample);
+            result.put("targetSample", targetSample);
+
+            result.put("success", true);
+        } catch (SQLException e) {
+            logger.error("数据详情对比失败: {}", e.getMessage());
+            result.put("success", false);
+            result.put("message", e.getMessage());
+        }
+        return result;
+    }
+
+    // ==================== 导出报告 (#17) ====================
+
+    @GetMapping("/export-report")
+    public void exportReport(HttpServletResponse response) {
+        if (currentDiffResult == null) {
+            try {
+                response.setContentType("text/plain;charset=UTF-8");
+                response.getWriter().write("请先执行数据库比对");
+            } catch (IOException e) {
+                logger.error("导出报告失败", e);
+            }
+            return;
+        }
+
+        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+        String filename = "DM_Diff_Report_" + timestamp + ".html";
+        response.setContentType("text/html;charset=UTF-8");
+        response.setHeader("Content-Disposition", "attachment;filename=" + URLEncoder.encode(filename, StandardCharsets.UTF_8));
+
+        try (PrintWriter writer = response.getWriter()) {
+            writer.println("<!DOCTYPE html>");
+            writer.println("<html lang='zh-CN'>");
+            writer.println("<head><meta charset='UTF-8'><title>达梦数据库对比报告</title>");
+            writer.println("<style>");
+            writer.println("body { font-family: 'Microsoft YaHei', sans-serif; margin: 20px; color: #333; }");
+            writer.println("h1 { color: #0d6efd; border-bottom: 2px solid #0d6efd; padding-bottom: 10px; }");
+            writer.println("h2 { color: #495057; margin-top: 24px; }");
+            writer.println(".summary { display: flex; gap: 16px; margin: 16px 0; }");
+            writer.println(".summary-item { padding: 12px 20px; border-radius: 8px; color: white; font-weight: bold; }");
+            writer.println(".bg-add { background: #198754; } .bg-del { background: #dc3545; } .bg-mod { background: #ffc107; color: #000; }");
+            writer.println("table { border-collapse: collapse; width: 100%; margin: 12px 0; }");
+            writer.println("th, td { border: 1px solid #dee2e6; padding: 8px 12px; text-align: left; }");
+            writer.println("th { background: #f8f9fa; font-weight: 600; }");
+            writer.println(".tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; color: white; }");
+            writer.println(".tag-add { background: #198754; } .tag-del { background: #dc3545; } .tag-mod { background: #ffc107; color: #000; }");
+            writer.println(".footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid #dee2e6; color: #6c757d; font-size: 12px; }");
+            writer.println("pre { background: #f5f5f5; padding: 8px; border-radius: 4px; overflow-x: auto; }");
+            writer.println("</style></head><body>");
+
+            writer.println("<h1>达梦数据库对比报告</h1>");
+            writer.println("<p>生成时间: " + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")) + "</p>");
+            writer.println("<p>源库: " + sourceConfig.getHost() + ":" + sourceConfig.getPort() + "/" + sourceConfig.getDatabase() + "</p>");
+            writer.println("<p>目标库: " + targetConfig.getHost() + ":" + targetConfig.getPort() + "/" + targetConfig.getDatabase() + "</p>");
+
+            writer.println("<div class='summary'>");
+            writer.println("<div class='summary-item bg-add'>新增表: " + currentDiffResult.getAddedTables().size() + "</div>");
+            writer.println("<div class='summary-item bg-del'>删除表: " + currentDiffResult.getDeletedTables().size() + "</div>");
+            writer.println("<div class='summary-item bg-mod'>修改表: " + currentDiffResult.getModifiedTables().size() + "</div>");
+            writer.println("</div>");
+
+            if (!currentDiffResult.getAddedTables().isEmpty()) {
+                writer.println("<h2>新增表</h2>");
+                for (com.example.dmdiff.diff.TableDiff td : currentDiffResult.getAddedTables()) {
+                    writer.println("<h3>" + td.getTableName() + "</h3>");
+                    writer.println("<table><thead><tr><th>字段名</th><th>类型</th><th>长度</th><th>可空</th><th>默认值</th></tr></thead><tbody>");
+                    for (com.example.dmdiff.diff.ColumnDiff cd : td.getColumnDiffs()) {
+                        com.example.dmdiff.metadata.ColumnInfo col = cd.getTargetColumn();
+                        if (col == null) col = cd.getSourceColumn();
+                        if (col != null) {
+                            writer.println("<tr><td>" + col.getColumnName() + "</td><td>" + col.getDataType()
+                                    + "</td><td>" + col.getDataLength() + "</td><td>" + (col.isNullable() ? "是" : "否")
+                                    + "</td><td>" + (col.getDefaultValue() != null ? col.getDefaultValue() : "") + "</td></tr>");
+                        }
+                    }
+                    writer.println("</tbody></table>");
+                }
+            }
+
+            if (!currentDiffResult.getDeletedTables().isEmpty()) {
+                writer.println("<h2>删除表</h2>");
+                for (com.example.dmdiff.diff.TableDiff td : currentDiffResult.getDeletedTables()) {
+                    writer.println("<p><strong>" + td.getTableName() + "</strong> - 表在目标库中不存在</p>");
+                }
+            }
+
+            if (!currentDiffResult.getModifiedTables().isEmpty()) {
+                writer.println("<h2>修改表</h2>");
+                for (com.example.dmdiff.diff.TableDiff td : currentDiffResult.getModifiedTables()) {
+                    writer.println("<h3>" + td.getTableName() + "</h3>");
+                    if (!td.getColumnDiffs().isEmpty()) {
+                        writer.println("<h4>字段变更</h4>");
+                        writer.println("<table><thead><tr><th>操作</th><th>字段名</th><th>变更详情</th></tr></thead><tbody>");
+                        for (com.example.dmdiff.diff.ColumnDiff cd : td.getColumnDiffs()) {
+                            String tagClass = cd.getDiffType() == com.example.dmdiff.diff.DiffType.ADD ? "tag-add"
+                                    : cd.getDiffType() == com.example.dmdiff.diff.DiffType.DELETE ? "tag-del" : "tag-mod";
+                            writer.println("<tr><td><span class='tag " + tagClass + "'>" + cd.getDiffType() + "</span></td>"
+                                    + "<td>" + cd.getColumnName() + "</td>"
+                                    + "<td>" + (cd.getChangeDetail() != null ? cd.getChangeDetail() : "") + "</td></tr>");
+                        }
+                        writer.println("</tbody></table>");
+                    }
+                    if (!td.getIndexDiffs().isEmpty()) {
+                        writer.println("<h4>索引变更</h4>");
+                        writer.println("<table><thead><tr><th>操作</th><th>索引名</th></tr></thead><tbody>");
+                        for (com.example.dmdiff.diff.IndexDiff id : td.getIndexDiffs()) {
+                            String tagClass = id.getDiffType() == com.example.dmdiff.diff.DiffType.ADD ? "tag-add"
+                                    : id.getDiffType() == com.example.dmdiff.diff.DiffType.DELETE ? "tag-del" : "tag-mod";
+                            writer.println("<tr><td><span class='tag " + tagClass + "'>" + id.getDiffType() + "</span></td>"
+                                    + "<td>" + id.getIndexName() + "</td></tr>");
+                        }
+                        writer.println("</tbody></table>");
+                    }
+                }
+            }
+
+            writer.println("<div class='footer'>");
+            writer.println("<p>DM-Diff 数据库对比工具 - 自动生成报告</p>");
+            writer.println("</div>");
+            writer.println("</body></html>");
+        } catch (IOException e) {
+            logger.error("导出报告失败", e);
+        }
+    }
+
+    @GetMapping("/export-data-compare")
+    public void exportDataCompare(HttpServletResponse response) {
+        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+        String filename = "DM_DataCompare_" + timestamp + ".csv";
+        response.setContentType("text/csv;charset=UTF-8");
+        response.setHeader("Content-Disposition", "attachment;filename=" + URLEncoder.encode(filename, StandardCharsets.UTF_8));
+
+        try (PrintWriter writer = response.getWriter()) {
+            writer.println("表名,源库行数,目标库行数,差异行数,是否匹配");
+            try {
+                String sourceSchema = sourceConfig.getDatabase();
+                String targetSchema = targetConfig.getDatabase();
+                List<String> sourceTables = databaseService.getAllTableNames(sourceConfig);
+                List<String> targetTables = databaseService.getAllTableNames(targetConfig);
+
+                for (String tableName : sourceTables) {
+                    long sourceCount = databaseService.getTableRowCount(sourceConfig, sourceSchema, tableName);
+                    long targetCount = 0;
+                    if (targetTables.contains(tableName)) {
+                        targetCount = databaseService.getTableRowCount(targetConfig, targetSchema, tableName);
+                    }
+                    writer.println(tableName + "," + sourceCount + "," + targetCount
+                            + "," + Math.abs(sourceCount - targetCount) + ","
+                            + (sourceCount == targetCount ? "是" : "否"));
+                }
+            } catch (SQLException e) {
+                writer.println("错误: " + e.getMessage());
+            }
+        } catch (IOException e) {
+            logger.error("导出数据对比CSV失败", e);
+        }
     }
 }
