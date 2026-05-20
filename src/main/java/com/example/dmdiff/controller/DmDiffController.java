@@ -168,6 +168,8 @@ public class DmDiffController {
             diffConfig.setCompareIndexes(compareIndexes);
             diffConfig.setCompareProcedures(compareProcedures);
 
+            logger.info("开始比对：source(database={}) vs target(database={})", 
+                sourceConfig.getDatabase(), targetConfig.getDatabase());
             currentDiffResult = diffService.compare(diffConfig);
 
             model.addAttribute("diffResult", currentDiffResult);
@@ -198,6 +200,11 @@ public class DmDiffController {
 
         model.addAttribute("upgradeSql", upgradeSql);
         model.addAttribute("rollbackSql", rollbackSql);
+        model.addAttribute("sourceConfig", sourceConfig);
+        model.addAttribute("targetConfig", targetConfig);
+
+        logger.info("SQL页面：sourceConfig(database={}), targetConfig(database={})", 
+            sourceConfig.getDatabase(), targetConfig.getDatabase());
 
         return "sql";
     }
@@ -232,16 +239,21 @@ public class DmDiffController {
     // ==================== 顺序执行 ====================
 
     private List<SqlStatement> executeStatements(List<SqlStatement> statements) {
+        logger.info("executeStatements: 开始执行 {} 条语句，目标旧库={}", statements.size(), sourceConfig.getDatabase());
         for (SqlStatement stmt : statements) {
             try {
                 databaseService.executeSql(sourceConfig, stmt.getSql());
                 stmt.setSuccess(true);
+                logger.info("SQL执行成功 [{}] {}: {}", stmt.getActionType(), stmt.getTableName(), stmt.getSql());
             } catch (SQLException e) {
                 stmt.setSuccess(false);
                 stmt.setErrorMessage(e.getMessage());
                 logger.error("SQL执行失败 [{}] {}: {}", stmt.getActionType(), stmt.getTableName(), e.getMessage());
             }
         }
+        logger.info("executeStatements: 执行完成，成功/失败={}", 
+            statements.stream().filter(SqlStatement::isSuccess).count() + "/" + 
+            statements.stream().filter(s -> !s.isSuccess()).count());
         return statements;
     }
 

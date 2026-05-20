@@ -72,6 +72,18 @@
     </nav>
 
     <div class="container mt-4">
+        <!-- 执行方向提示 -->
+        <div class="alert alert-info d-flex align-items-center gap-2 py-2 mb-3" style="font-size:14px">
+            <span class="fw-bold">🔄 执行方向：</span>
+            <span class="badge bg-danger">源库（旧库）</span>
+            <span th:text="' ' + ${sourceConfig.host} + ':' + ${sourceConfig.port} + '/' + ${sourceConfig.database}" style="color:#842029"></span>
+            <span class="mx-1">← 接收SQL</span>
+            <span class="badge bg-secondary">|</span>
+            <span class="badge bg-success">目标库（新库）</span>
+            <span th:text="' ' + ${targetConfig.host} + ':' + ${targetConfig.port} + '/' + ${targetConfig.database}" style="color:#0f5132"></span>
+            <span class="mx-1">→ 参照标准</span>
+        </div>
+
         <ul class="nav nav-tabs mb-4" id="sqlTabs" role="tablist">
             <li class="nav-item" role="presentation">
                 <button class="nav-link active" id="upgrade-tab" data-bs-toggle="tab" data-bs-target="#upgrade" type="button" role="tab">正向升级 SQL</button>
