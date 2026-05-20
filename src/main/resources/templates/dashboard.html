@@ -5,12 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DM-Diff - 全量看板</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        /* 夜间模式 */
+        [data-bs-theme="dark"] .card { background-color: #2b3035; border-color: #495057; }
+        [data-bs-theme="dark"] .card-header { background-color: #343a40; }
+        [data-bs-theme="dark"] .card.bg-light, [data-bs-theme="dark"] .bg-light { background-color: #1a1d20 !important; }
+        [data-bs-theme="dark"] .text-muted { color: #adb5bd !important; }
+        [data-bs-theme="dark"] .form-label { color: #dee2e6; }
+        [data-bs-theme="dark"] .form-check-label { color: #dee2e6; }
+    </style>
 </head>
 <body>
     <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
         <div class="container">
             <a class="navbar-brand" href="/">DM-Diff</a>
             <span class="navbar-text">全量看板</span>
+            <button class="btn btn-sm btn-outline-light ms-auto" onclick="toggleTheme()" id="themeToggle" style="font-size:13px">🌙 夜间</button>
         </div>
     </nav>
 
@@ -155,6 +165,16 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        function toggleTheme() {
+            const html = document.documentElement;
+            const isDark = html.getAttribute('data-bs-theme') === 'dark';
+            html.setAttribute('data-bs-theme', isDark ? 'light' : 'dark');
+            document.getElementById('themeToggle').textContent = isDark ? '🌙 夜间' : '☀️ 日间';
+            localStorage.setItem('dm-diff-theme', isDark ? 'light' : 'dark');
+        }
+        const savedTheme = localStorage.getItem('dm-diff-theme');
+        if (savedTheme) document.documentElement.setAttribute('data-bs-theme', savedTheme);
+
         function startDiff() {
             const ignoreCase = document.getElementById('ignoreCase').checked;
             const blacklistInput = document.getElementById('blacklist').value;
