@@ -9,6 +9,13 @@ target/
 # Maven
 log/
 
+# 日志目录
+logs/
+
+# SSH密钥文件
+123456
+123456.pub
+
 # IDE
 .idea/
 *.iml
