@@ -199,6 +199,13 @@ public class SqlGeneratorService {
         return tableDiff.getTableName();
     }
 
+    private String getSchemaPrefix(String tableName) {
+        if (tableName != null && tableName.contains(".")) {
+            return tableName.substring(0, tableName.indexOf('.') + 1);
+        }
+        return "";
+    }
+
     private String generateCreateTableSql(TableDiff tableDiff) {
         StringBuilder sql = new StringBuilder();
         String tableName = getQualifiedName(tableDiff);
@@ -385,7 +392,9 @@ public class SqlGeneratorService {
     }
 
     private String generateDropIndexSql(String tableName, IndexInfo index) {
-        return String.format("-- 删除索引 %s\nDROP INDEX %s;", index.getIndexName(), index.getIndexName());
+        String schemaPrefix = getSchemaPrefix(tableName);
+        return String.format("-- 删除索引 %s\nDROP INDEX %s%s;", 
+            index.getIndexName(), schemaPrefix, index.getIndexName());
     }
 
     private String generateCreateIndexSql(String tableName, IndexInfo index) {
@@ -397,8 +406,10 @@ public class SqlGeneratorService {
         } else {
             sql.append("CREATE INDEX ");
         }
+
+        String schemaPrefix = getSchemaPrefix(tableName);
         
-        sql.append(index.getIndexName())
+        sql.append(schemaPrefix).append(index.getIndexName())
            .append(" ON ")
            .append(tableName)
            .append("(")
